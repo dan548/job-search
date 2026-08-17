@@ -1,0 +1,48 @@
+spring:
+  application:
+    name: job-agent
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5433/jobagent}
+    username: ${DB_USERNAME:jobagent}
+    password: ${DB_PASSWORD:jobagent}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate.jdbc.time_zone: UTC
+  flyway:
+    enabled: true
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 5MB
+
+server:
+  error:
+    include-stacktrace: never
+
+job-agent:
+  browser:
+    playwright:
+      enabled: ${PLAYWRIGHT_ENABLED:false}
+      headless: ${PLAYWRIGHT_HEADLESS:true}
+      allowed-hosts: ${PLAYWRIGHT_ALLOWED_HOSTS:}
+      navigation-timeout-ms: ${PLAYWRIGHT_NAVIGATION_TIMEOUT_MS:30000}
+      action-timeout-ms: ${PLAYWRIGHT_ACTION_TIMEOUT_MS:10000}
+      persist-storage-state: ${PLAYWRIGHT_PERSIST_STORAGE_STATE:false}
+  resume:
+    rendering:
+      max-pages: ${RESUME_MAX_PAGES:3}
+    ocr:
+      enabled: ${TESSERACT_ENABLED:false}
+      command: ${TESSERACT_COMMAND:tesseract}
+      languages: ${TESSERACT_LANGUAGES:eng+rus}
+      dpi: ${TESSERACT_DPI:300}
+      timeout-seconds: ${TESSERACT_TIMEOUT_SECONDS:45}
+  ai:
+    openai:
+      enabled: ${OPENAI_ENABLED:false}
+      api-key: ${OPENAI_API_KEY:}
+      model: ${OPENAI_MODEL:gpt-5.6}
+      base-url: ${OPENAI_BASE_URL:https://api.openai.com}

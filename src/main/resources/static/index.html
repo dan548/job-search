@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Локальное рабочее пространство для подготовки доказательных откликов">
+  <title>Карьерный штаб</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#top" aria-label="Карьерный штаб — на главную">
+      <span class="brand-mark">КШ</span>
+      <span><strong>Карьерный штаб</strong><small>Личное рабочее пространство</small></span>
+    </a>
+    <div id="service-status" class="service-status"><span></span> Проверяем сервис…</div>
+  </header>
+
+  <main id="top">
+    <section class="hero">
+      <div>
+        <p class="eyebrow">Один спокойный процесс</p>
+        <h1>От исходного резюме<br>до готового отклика.</h1>
+      </div>
+      <p class="hero-copy">Проверяйте факты, сравнивайте себя с вакансией и отправляйте только то, что подтвердили лично.</p>
+    </section>
+
+    <nav class="steps" aria-label="Этапы работы">
+      <a href="#resume"><b>01</b><span>Профиль</span></a>
+      <a href="#vacancy"><b>02</b><span>Вакансия</span></a>
+      <a href="#tailoring"><b>03</b><span>Резюме под роль</span></a>
+      <a href="#application"><b>04</b><span>Отклик</span></a>
+    </nav>
+
+    <section id="resume" class="workspace-section">
+      <div class="section-heading">
+        <div><span class="section-number">01</span><p class="eyebrow">Основа</p><h2>Профиль кандидата</h2></div>
+        <p>Загрузите PDF, отметьте верные элементы и сохраните. Следующие версии резюме дополнят канонический профиль подробностями, не удаляя уже подтверждённое.</p>
+      </div>
+      <div class="identity-toolbar card">
+        <label><span>Текущая identity</span><select id="identity-select" aria-label="Текущая identity"></select></label>
+        <button id="new-identity" class="button secondary" type="button">Новая чистая identity</button>
+        <p>У каждой identity — собственный профиль, история резюме и варианты под вакансии.</p>
+      </div>
+      <div class="two-column">
+        <article class="card upload-card">
+          <div class="card-title"><h3>Версия резюме</h3><span id="resume-state" class="pill muted">Не загружено</span></div>
+          <label class="dropzone" for="resume-file">
+            <input id="resume-file" type="file" accept="application/pdf,.pdf">
+            <span class="drop-icon">↥</span>
+            <strong>Выберите PDF-резюме</strong>
+            <small>До 5 МБ · текстовый PDF или скан с OCR</small>
+          </label>
+          <button id="upload-resume" class="button primary" type="button" disabled>Разобрать и дополнить профиль</button>
+          <p id="resume-file-name" class="file-name"></p>
+        </article>
+        <article class="card profile-card">
+          <div class="card-title"><h3>Канонический профиль</h3><div class="card-title-actions"><button id="edit-profile" class="button text" type="button">Редактировать</button><span id="profile-state" class="pill muted">Пусто</span></div></div>
+          <div id="profile-summary" class="empty-state">После проверки резюме здесь появятся имя, роль, навыки и подтверждённые факты.</div>
+        </article>
+      </div>
+      <article id="profile-editor" class="card profile-editor hidden">
+        <div class="review-header"><div><p class="eyebrow">Ручное редактирование</p><h3>Данные identity</h3></div><button id="close-profile-editor" class="button text" type="button">Закрыть</button></div>
+        <form id="profile-details-form" class="form-grid profile-details-form">
+          <label><span>Название identity</span><input name="label" required placeholder="Например, Backend / международный"></label>
+          <label><span>Имя в резюме</span><input name="displayName" required></label>
+          <label><span>Позиционирование</span><input name="headline" placeholder="Staff Backend Engineer"></label>
+          <label><span>Навыки</span><input name="skills" placeholder="Kotlin, Kafka, PostgreSQL"></label>
+          <div class="full form-action"><button class="button primary" type="submit">Сохранить профиль</button></div>
+        </form>
+        <div class="profile-editor-grid">
+          <section>
+            <div class="subsection-title"><h3>Контакты</h3><small>Можно хранить несколько вариантов каждого типа</small></div>
+            <div id="contact-list" class="editable-list"></div>
+            <form id="contact-form" class="compact-form">
+              <select name="type" aria-label="Тип контакта"><option value="EMAIL">Email</option><option value="PHONE">Телефон</option><option value="LOCATION">Локация</option><option value="LINKEDIN">LinkedIn</option><option value="GITHUB">GitHub</option><option value="WEBSITE">Сайт</option><option value="OTHER">Другое</option></select>
+              <input name="value" required placeholder="Значение">
+              <input name="label" placeholder="Подпись, необязательно">
+              <button class="button secondary" type="submit">Добавить контакт</button>
+            </form>
+          </section>
+          <section>
+            <div class="subsection-title"><h3>Опыт работы</h3><small>Сроки, описание и технологии сохраняются в профиле</small></div>
+            <div id="experience-list" class="editable-list"></div>
+            <form id="experience-form" class="form-grid compact-experience-form">
+              <label><span>Компания</span><input name="company" required></label>
+              <label><span>Роль</span><input name="role" required></label>
+              <label><span>Начало</span><input name="startDate" type="month"></label>
+              <label><span>Окончание</span><input name="endDate" type="month"></label>
+              <label class="full checkbox-line"><input name="current" type="checkbox"><span>Работаю сейчас</span></label>
+              <label class="full"><span>Описание</span><textarea name="description" rows="3"></textarea></label>
+              <label class="full"><span>Технологии</span><input name="technologies" placeholder="Kotlin, Spring Boot, Kafka"></label>
+              <div class="full form-action"><button class="button secondary" type="submit">Добавить опыт</button></div>
+            </form>
+          </section>
+        </div>
+      </article>
+      <article id="resume-review" class="card review-card hidden" aria-live="polite">
+        <div class="review-header">
+          <div><p class="eyebrow">Требуется ваше решение</p><h3>Проверьте распознанные данные</h3></div>
+          <div class="review-actions"><button id="select-all" class="button text" type="button">Выбрать всё</button><span id="review-count">0 из 0</span></div>
+        </div>
+        <p class="review-note">Отмеченное будет подтверждено, неотмеченное — отклонено. В профиль попадут только подтверждённые элементы.</p>
+        <div id="review-list" class="review-list"></div>
+        <div class="sticky-action"><button id="confirm-resume" class="button primary" type="button">Сохранить проверку и обновить профиль</button></div>
+      </article>
+    </section>
+
+    <section id="vacancy" class="workspace-section">
+      <div class="section-heading">
+        <div><span class="section-number">02</span><p class="eyebrow">Цель</p><h2>Вакансия и соответствие</h2></div>
+        <p>Добавьте описание роли. Анализ использует только проверенные факты профиля и отдельно показывает пробелы.</p>
+      </div>
+      <div class="two-column wide-left">
+        <article class="card">
+          <div class="card-title"><h3>Новая вакансия</h3></div>
+          <form id="vacancy-form" class="form-grid">
+            <label><span>Компания</span><input name="company" required placeholder="Например, Acme"></label>
+            <label><span>Название роли</span><input name="title" required placeholder="Senior Backend Engineer"></label>
+            <label><span>Локация</span><input name="location" placeholder="Remote / Warsaw"></label>
+            <label><span>Ссылка</span><input name="url" type="url" placeholder="https://…"></label>
+            <label class="full"><span>Описание вакансии</span><textarea name="description" required rows="9" placeholder="Вставьте полное описание вакансии"></textarea></label>
+            <div class="full form-action"><button class="button primary" type="submit">Сохранить и проанализировать</button></div>
+          </form>
+        </article>
+        <aside class="card vacancies-card">
+          <div class="card-title"><h3>Последние вакансии</h3><span id="vacancy-count" class="pill muted">0</span></div>
+          <div id="vacancy-list" class="vacancy-list"><div class="empty-state compact">Сохранённых вакансий пока нет.</div></div>
+        </aside>
+      </div>
+      <article id="analysis-panel" class="card analysis-card hidden" aria-live="polite"></article>
+    </section>
+
+    <section id="tailoring" class="workspace-section">
+      <div class="section-heading">
+        <div><span class="section-number">03</span><p class="eyebrow">Версия под роль</p><h2>Доказательное резюме</h2></div>
+        <p>Система меняет порядок и формулировки, но не добавляет утверждения без ссылки на подтверждённый источник.</p>
+      </div>
+      <article class="card tailoring-card">
+        <div>
+          <span id="tailor-state" class="pill muted">Сначала проанализируйте вакансию</span>
+          <h3 id="tailor-title">Подготовьте вариант под выбранную роль</h3>
+          <p id="tailor-copy">После анализа здесь появятся пробелы, вопросы и готовый ATS-readable PDF.</p>
+        </div>
+        <div class="tailor-actions">
+          <button id="create-variant" class="button primary" type="button" disabled>Создать вариант резюме</button>
+          <a id="download-pdf" class="button secondary hidden" href="#">Скачать PDF</a>
+        </div>
+        <div id="resume-selection" class="resume-selection hidden">
+          <div class="selection-heading"><div><h3>Что включить в резюме</h3><p>Мы отметили рекомендуемый набор. Перед генерацией его можно изменить.</p></div><button id="selection-defaults" class="button text" type="button">Вернуть рекомендации</button></div>
+          <div id="selection-groups" class="selection-groups"></div>
+        </div>
+        <div id="variant-details" class="variant-details hidden"></div>
+      </article>
+    </section>
+
+    <section id="application" class="workspace-section">
+      <div class="section-heading">
+        <div><span class="section-number">04</span><p class="eyebrow">Контроль</p><h2>Отклик и подтверждение</h2></div>
+        <p>Автозаполнение останавливается на неизвестных вопросах. Финальная отправка всегда требует отдельного подтверждения.</p>
+      </div>
+      <article class="card application-card">
+        <div class="application-start">
+          <label><span>Ссылка на форму отклика</span><input id="application-url" type="url" placeholder="https://jobs.example.com/apply/…"></label>
+          <button id="prepare-application" class="button primary" type="button" disabled>Подготовить отклик</button>
+          <button id="start-browser" class="button secondary hidden" type="button">Открыть и заполнить форму</button>
+        </div>
+        <div id="application-status" class="empty-state">Сначала создайте вариант резюме под вакансию.</div>
+        <div id="approval-list" class="approval-list"></div>
+      </article>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/app.js" defer></script>
+</body>
+</html>

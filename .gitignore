@@ -1,0 +1,46 @@
+# Gradle and Kotlin
+.gradle/
+.kotlin/
+build/
+**/build/
+out/
+
+# IDEs and editors
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+*.swp
+*.swo
+*~
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+.envrc
+.direnv/
+src/main/resources/application-local.yml
+src/main/resources/application-secrets.yml
+
+# Logs and JVM diagnostics
+*.log
+logs/
+hs_err_pid*
+replay_pid*
+*.hprof
+
+# Generated application artifacts
+/output/
+/tmp/
+/backups/
+
+# Testcontainers and local tooling
+.testcontainers.properties
+
+# Operating systems
+.DS_Store
+._*
+Thumbs.db
+Desktop.ini
