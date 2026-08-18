@@ -26,6 +26,8 @@ data class PlaywrightBrowserProperties(
     val allowedHosts: List<String> = emptyList(),
     val navigationTimeoutMs: Double = 30_000.0,
     val actionTimeoutMs: Double = 10_000.0,
+    /** Enables plain HTTP only for an explicitly allowlisted loopback host, for local test fixtures. */
+    val allowHttpLocalhost: Boolean = false,
     /**
      * Whether cookies and local storage of the ATS session may be stored in PostgreSQL. Off by
      * default: it lets a signed-in session survive a restart, at the price of keeping session
@@ -45,7 +47,10 @@ class PlaywrightBrowserConfiguration {
 
 class BrowserCheckpointMismatchException(message: String) : RuntimeException(message)
 
-internal class BrowserUrlPolicy(allowedHosts: Collection<String>) {
+internal class BrowserUrlPolicy(
+    allowedHosts: Collection<String>,
+    private val allowHttpLocalhost: Boolean = false,
+) {
     private val hosts = allowedHosts.map { it.trim().lowercase().removePrefix(".") }
         .filter { it.isNotEmpty() }
         .toSet()
@@ -58,13 +63,20 @@ internal class BrowserUrlPolicy(allowedHosts: Collection<String>) {
 
     fun allows(value: String): Boolean {
         val uri = runCatching { URI(value) }.getOrNull() ?: return false
-        if (!uri.scheme.equals("https", ignoreCase = true) || uri.userInfo != null) return false
+        if (uri.userInfo != null) return false
         val host = uri.host?.lowercase() ?: return false
+        val secure = uri.scheme.equals("https", ignoreCase = true)
+        val localHttp = allowHttpLocalhost && uri.scheme.equals("http", ignoreCase = true) && host in LOOPBACK_HOSTS
+        if (!secure && !localHttp) return false
         return hosts.any { host == it || host.endsWith(".$it") }
     }
 
     fun requireAllowed(value: String) {
-        require(allows(value)) { "Browser URL is not an allowed HTTPS destination" }
+        require(allows(value)) { "Browser URL is not an allowed destination" }
+    }
+
+    private companion object {
+        val LOOPBACK_HOSTS = setOf("localhost", "127.0.0.1", "::1")
     }
 }
 
@@ -81,7 +93,7 @@ class PlaywrightBrowserApplicationRunner(
         val submitResults: MutableMap<String, Pair<String, SubmissionReceipt>> = mutableMapOf(),
     )
 
-    private val urlPolicy = BrowserUrlPolicy(properties.allowedHosts)
+    private val urlPolicy = BrowserUrlPolicy(properties.allowedHosts, properties.allowHttpLocalhost)
     private val driver = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "playwright-browser-runner").apply { isDaemon = true }
     }
@@ -296,21 +308,24 @@ class PlaywrightBrowserApplicationRunner(
     }
 
     internal fun validationErrors(page: Page): List<BrowserValidationError> =
-        visibleLocators(page.locator("input:invalid, textarea:invalid, select:invalid")).map { locator ->
-            BrowserValidationError(
-                fieldKey = locator.getAttribute("data-job-agent-field-key"),
-                message = (locator.evaluate("el => el.validationMessage") as? String)
-                    ?.take(300).orEmpty().ifBlank { "The field is invalid" },
-                code = (locator.evaluate(
-                    """el => {
-                      const names = ['valueMissing', 'typeMismatch', 'patternMismatch', 'tooLong',
-                        'tooShort', 'rangeUnderflow', 'rangeOverflow', 'stepMismatch', 'badInput'];
-                      return names.find(name => el.validity?.[name]) || 'invalidValue';
-                    }"""
-                ) as? String)?.replace(Regex("([a-z])([A-Z])"), "${'$'}1_${'$'}2")?.uppercase()
-                    ?: "INVALID_VALUE",
-            )
-        }
+        visibleLocators(page.locator("input:invalid, textarea:invalid, select:invalid"))
+            .mapIndexed { index, locator ->
+                index to BrowserValidationError(
+                    fieldKey = locator.getAttribute("data-job-agent-field-key"),
+                    message = (locator.evaluate("el => el.validationMessage") as? String)
+                        ?.take(300).orEmpty().ifBlank { "The field is invalid" },
+                    code = (locator.evaluate(
+                        """el => {
+                          const names = ['valueMissing', 'typeMismatch', 'patternMismatch', 'tooLong',
+                            'tooShort', 'rangeUnderflow', 'rangeOverflow', 'stepMismatch', 'badInput'];
+                          return names.find(name => el.validity?.[name]) || 'invalidValue';
+                        }"""
+                    ) as? String)?.replace(Regex("([a-z])([A-Z])"), "${'$'}1_${'$'}2")?.uppercase()
+                        ?: "INVALID_VALUE",
+                )
+            }
+            .distinctBy { (index, error) -> error.fieldKey?.let { "$it|${error.code}" } ?: "anonymous-$index" }
+            .map { it.second }
 
     internal fun submitControl(page: Page): Locator {
         val explicit = visibleLocators(page.locator("form button[type=submit], form input[type=submit]"))

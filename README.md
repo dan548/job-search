@@ -184,6 +184,7 @@ SPRING_PROFILES_ACTIVE=dev \
 | `PLAYWRIGHT_ALLOWED_HOSTS` | пусто | Обязательно при `PLAYWRIGHT_ENABLED=true` | Список разрешённых доменов через запятую; действует как защита от перехода на произвольные URL |
 | `PLAYWRIGHT_NAVIGATION_TIMEOUT_MS` | `30000` | Если страницы ATS загружаются дольше 30 секунд | Таймаут навигации в миллисекундах; должен быть положительным |
 | `PLAYWRIGHT_ACTION_TIMEOUT_MS` | `10000` | Если отдельные controls появляются или реагируют медленно | Таймаут fill/click/select операций в миллисекундах; должен быть положительным |
+| `PLAYWRIGHT_ALLOW_HTTP_LOCALHOST` | `false` | Только для локального тестового стенда | Разрешает HTTP для явно указанного `localhost`, `127.0.0.1` или `::1`; внешние HTTP-адреса остаются запрещены |
 | `PLAYWRIGHT_PERSIST_STORAGE_STATE` | `false` | Включайте только осознанно, если browser session должна переживать рестарт | Сохраняет cookies и local storage ATS-сессии в PostgreSQL |
 
 `PLAYWRIGHT_PERSIST_STORAGE_STATE=true` может сохранить авторизационные cookies. Используйте эту настройку только на доверенном локальном компьютере и защищайте backup базы данных.

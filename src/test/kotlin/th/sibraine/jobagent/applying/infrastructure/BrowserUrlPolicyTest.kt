@@ -22,4 +22,15 @@ class BrowserUrlPolicyTest {
         assertThrows<IllegalArgumentException> { BrowserUrlPolicy(emptyList()) }
         assertThrows<IllegalArgumentException> { policy.requireAllowed("https://example.net/apply") }
     }
+
+    @Test
+    fun `local fixture mode permits only explicitly allowlisted loopback http`() {
+        val local = BrowserUrlPolicy(listOf("127.0.0.1"), allowHttpLocalhost = true)
+
+        assertTrue(local.allows("http://127.0.0.1:8080/lever/apply"))
+        assertFalse(local.allows("http://localhost:8080/lever/apply"))
+        assertFalse(local.allows("http://192.168.1.10:8080/lever/apply"))
+        assertFalse(BrowserUrlPolicy(listOf("example.com"), allowHttpLocalhost = true).allows("http://example.com/apply"))
+        assertFalse(BrowserUrlPolicy(listOf("127.0.0.1")).allows("http://127.0.0.1:8080/lever/apply"))
+    }
 }

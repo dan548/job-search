@@ -130,6 +130,7 @@ class PlaywrightBrowserApplicationRunnerTest {
             assertEquals("By applying, you agree to the Candidate Privacy Notice.✱", consent.label)
             assertEquals(FormFieldType.CHECKBOX, consent.type)
             assertTrue(consent.required)
+            assertEquals(3, runner.validationErrors(page).size)
         } finally {
             runner.close()
             browser.close()

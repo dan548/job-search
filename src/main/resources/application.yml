@@ -30,6 +30,7 @@ job-agent:
       allowed-hosts: ${PLAYWRIGHT_ALLOWED_HOSTS:}
       navigation-timeout-ms: ${PLAYWRIGHT_NAVIGATION_TIMEOUT_MS:30000}
       action-timeout-ms: ${PLAYWRIGHT_ACTION_TIMEOUT_MS:10000}
+      allow-http-localhost: ${PLAYWRIGHT_ALLOW_HTTP_LOCALHOST:false}
       persist-storage-state: ${PLAYWRIGHT_PERSIST_STORAGE_STATE:false}
   resume:
     rendering:
