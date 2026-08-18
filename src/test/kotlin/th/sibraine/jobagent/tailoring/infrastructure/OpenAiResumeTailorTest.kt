@@ -66,6 +66,62 @@ class OpenAiResumeTailorTest {
         assertTrue(OpenAiResumeTailor.SYSTEM_PROMPT.contains("untrusted data"))
         assertTrue(OpenAiResumeTailor.SYSTEM_PROMPT.contains("Never add a claim"))
         assertTrue(OpenAiResumeTailor.SYSTEM_PROMPT.contains("exact id"))
+        assertTrue(OpenAiResumeTailor.SYSTEM_PROMPT.contains("Never put an experience or project elementId"))
+        assertTrue(OpenAiResumeTailor.SYSTEM_PROMPT.contains("sourceElementId at most once"))
+    }
+
+    @Test
+    fun `repairs a parent experience id used as an achievement source`() {
+        val client = StructuredOutputClient { _, _, _, _ ->
+            """{
+              "summary":null,
+              "experiences":[{
+                "sourceElementId":"exp-1",
+                "achievements":[{
+                  "text":"Wrote Kotlin services",
+                  "evidence":[{"kind":"RESUME_ELEMENT","id":"ach-1"}],
+                  "sourceElementId":"exp-1",
+                  "addressedRequirements":["Kotlin"]
+                }]
+              }],
+              "projects":[],"skillElementIds":["skill-kotlin"],"rationale":"Kotlin first."
+            }"""
+        }
+
+        val plan = OpenAiResumeTailor(client, objectMapper).tailor(request())
+
+        assertNull(plan.experiences.single().achievements.single().sourceElementId)
+        assertEquals("ach-1", plan.experiences.single().achievements.single().evidence.single().id)
+    }
+
+    @Test
+    fun `merges repeated experience sections and removes repeated achievement sources`() {
+        val client = StructuredOutputClient { _, _, _, _ ->
+            """{
+              "summary":null,
+              "experiences":[
+                {"sourceElementId":"exp-1","achievements":[{
+                  "text":"Wrote Kotlin services",
+                  "evidence":[{"kind":"RESUME_ELEMENT","id":"ach-1"}],
+                  "sourceElementId":"ach-1","addressedRequirements":["Kotlin"]
+                }]},
+                {"sourceElementId":"exp-1","achievements":[{
+                  "text":"Built backend services in Kotlin",
+                  "evidence":[{"kind":"RESUME_ELEMENT","id":"ach-1"}],
+                  "sourceElementId":"ach-1","addressedRequirements":["Kotlin"]
+                }]}
+              ],
+              "projects":[],"skillElementIds":["skill-kotlin","skill-kotlin"],
+              "rationale":"Kotlin first."
+            }"""
+        }
+
+        val plan = OpenAiResumeTailor(client, objectMapper).tailor(request())
+
+        assertEquals(1, plan.experiences.size)
+        assertEquals("exp-1", plan.experiences.single().sourceElementId)
+        assertEquals(listOf("Wrote Kotlin services"), plan.experiences.single().achievements.map { it.text })
+        assertEquals(listOf("skill-kotlin"), plan.skillElementIds)
     }
 
     private fun request() = TailoringRequest(

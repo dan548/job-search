@@ -131,6 +131,30 @@ class TailoringPlanValidatorTest {
     }
 
     @Test
+    fun `rejects foreign narrative evidence even when source element is omitted`() {
+        assertThrows<InvalidTailoringPlanException> {
+            validator.validate(
+                TailoringPlan(
+                    experiences = listOf(
+                        TailoredExperience(
+                            "exp-1",
+                            listOf(
+                                TailoredText(
+                                    text = "Automated resume parsing",
+                                    evidence = listOf(EvidenceRef(EvidenceKind.RESUME_ELEMENT, "prj-ach-1")),
+                                    sourceElementId = null,
+                                )
+                            ),
+                        )
+                    )
+                ),
+                resume(),
+                profile(),
+            )
+        }
+    }
+
+    @Test
     fun `rejects unknown experiences, projects and skills`() {
         assertThrows<InvalidTailoringPlanException> {
             validator.validate(TailoringPlan(experiences = listOf(TailoredExperience("exp-unknown"))), resume(), profile())

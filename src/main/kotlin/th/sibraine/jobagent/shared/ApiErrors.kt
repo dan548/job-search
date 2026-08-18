@@ -3,6 +3,7 @@ package th.sibraine.jobagent.shared
 import th.sibraine.jobagent.applying.domain.InvalidApplicationTransitionException
 import th.sibraine.jobagent.matching.domain.InvalidMatchResultException
 import th.sibraine.jobagent.shared.ai.AiAnalysisException
+import th.sibraine.jobagent.shared.ai.AiRequestTimeoutException
 import th.sibraine.jobagent.candidate.domain.ResumeParsingException
 import th.sibraine.jobagent.rendering.domain.ResumeRenderingException
 import th.sibraine.jobagent.tailoring.domain.InvalidTailoringPlanException
@@ -62,6 +63,10 @@ class ApiExceptionHandler {
     @ExceptionHandler(AiAnalysisException::class)
     fun aiAnalysis(error: AiAnalysisException): ResponseEntity<ApiError> {
         logger.error("AI structured analysis failed", error)
+        if (error is AiRequestTimeoutException) {
+            return ResponseEntity.status(HttpStatus.GATEWAY_TIMEOUT)
+                .body(ApiError("AI_REQUEST_TIMEOUT", "OpenAI не ответил вовремя. Повторите запрос."))
+        }
         return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
             .body(ApiError("AI_ANALYSIS_FAILED", "AI analysis is temporarily unavailable"))
     }

@@ -1,4 +1,5 @@
 const state = { profile: null, identities: [], preview: null, vacancies: [], vacancy: null, analysis: null, variant: null, draft: null, resumeSelection: null, resumePhotoDataUri: null, settings: null, catalog: [], browserSession: null, browserAudit: [], browserDiagnostics: [], vacancySelection: 0, profileSkillsDraft: [] };
+let analysisInFlight = null;
 
 const $ = (selector) => document.querySelector(selector);
 const escapeHtml = (value = "") => String(value).replace(/[&<>'"]/g, (char) => ({
@@ -1082,6 +1083,14 @@ async function deleteVacancy(id) {
 async function analyzeSelectedVacancy() {
   if (!state.vacancy) return;
   const vacancyId = state.vacancy.id;
+  if (analysisInFlight?.vacancyId === vacancyId) return analysisInFlight.promise;
+  const promise = runVacancyAnalysis(vacancyId);
+  analysisInFlight = { vacancyId, promise };
+  try { return await promise; }
+  finally { if (analysisInFlight?.promise === promise) analysisInFlight = null; }
+}
+
+async function runVacancyAnalysis(vacancyId) {
   const button = $("#reanalyze") || $("#vacancy-form button[type=submit]");
   busy(button, true, "Анализируем…");
   try {

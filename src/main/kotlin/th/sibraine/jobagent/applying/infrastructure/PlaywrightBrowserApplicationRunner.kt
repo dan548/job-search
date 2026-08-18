@@ -4,6 +4,7 @@ import com.microsoft.playwright.*
 import com.microsoft.playwright.options.LoadState
 import com.microsoft.playwright.options.FilePayload
 import com.microsoft.playwright.options.SelectOption
+import com.microsoft.playwright.options.WaitForSelectorState
 import com.microsoft.playwright.options.WaitUntilState
 import th.sibraine.jobagent.applying.domain.*
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
@@ -47,6 +48,8 @@ class PlaywrightBrowserConfiguration {
 
 class BrowserCheckpointMismatchException(message: String) : RuntimeException(message)
 
+class BrowserAutocompleteException(message: String) : RuntimeException(message)
+
 internal class BrowserUrlPolicy(
     allowedHosts: Collection<String>,
     private val allowHttpLocalhost: Boolean = false,
@@ -89,6 +92,7 @@ class PlaywrightBrowserApplicationRunner(
         val context: BrowserContext,
         val page: Page,
         var checkpoint: String,
+        val blockedHosts: MutableSet<String> = linkedSetOf(),
         val fillResults: MutableMap<String, Pair<String, BrowserFillResult>> = mutableMapOf(),
         val submitResults: MutableMap<String, Pair<String, SubmissionReceipt>> = mutableMapOf(),
     )
@@ -116,6 +120,7 @@ class PlaywrightBrowserApplicationRunner(
             "A browser session for this draft is already bound to another form URL"
         }
         urlPolicy.requireAllowed(session.page.url())
+        waitForFormReady(session.page)
         val fields = observeFields(session.page)
         val challenges = detectChallenges(session.page)
         val checkpoint = checkpoint(session.page.url(), fields)
@@ -134,16 +139,12 @@ class PlaywrightBrowserApplicationRunner(
         }
         requireCheckpoint(session, command.expectedCheckpoint)
 
-        val applied = mutableListOf<String>()
-        command.actions.forEach { action ->
-            apply(session.page, action)
-            applied += action.fieldKey
-        }
+        val (applied, actionErrors) = applyActions(session.page, command.actions, session.blockedHosts)
         val fields = observeFields(session.page)
         val result = BrowserFillResult(
             checkpoint = checkpoint(session.page.url(), fields),
             appliedFieldKeys = applied,
-            validationErrors = validationErrors(session.page),
+            validationErrors = validationErrors(session.page) + actionErrors,
             challenges = detectChallenges(session.page),
         )
         session.checkpoint = result.checkpoint
@@ -168,21 +169,38 @@ class PlaywrightBrowserApplicationRunner(
         val page = session.page
         val beforeUrl = page.url()
         val submit = submitControl(page)
-        submit.click(Locator.ClickOptions().setTimeout(properties.actionTimeoutMs))
+        try {
+            submit.click(Locator.ClickOptions().setTimeout(properties.actionTimeoutMs))
+        } catch (error: TimeoutError) {
+            // Playwright waits for the control to become enabled and then reports a bare timeout.
+            // A still disabled Submit means the site considers the form incomplete, which is worth
+            // saying out loud: it is the answer to why the run stopped here.
+            check(runCatching { submit.isEnabled }.getOrDefault(true)) {
+                "The Submit control stayed disabled, so the site still considers the form incomplete"
+            }
+            throw error
+        }
         runCatching { session.page.waitForLoadState(LoadState.DOMCONTENTLOADED) }
         var confirmationPoll = 0
-        while (!submissionConfirmed(page, submit, beforeUrl) && confirmationPoll < SUBMIT_CONFIRMATION_POLLS) {
+        while (confirmationPoll < SUBMIT_CONFIRMATION_POLLS &&
+            !submissionConfirmed(page, submit, beforeUrl) &&
+            submissionError(page) == null
+        ) {
             page.waitForTimeout(SUBMIT_CONFIRMATION_POLL_MS)
             confirmationPoll++
         }
         urlPolicy.requireAllowed(page.url())
+        // An error banner only counts while the page has not confirmed anything: reporting a
+        // failure for an application that did go through would invite a duplicate submission.
+        val confirmed = submissionConfirmed(page, submit, beforeUrl)
+        if (!confirmed) {
+            submissionError(page)?.let { banner -> error("The site rejected the submission: $banner") }
+        }
         val validation = validationErrors(page)
         check(validation.isEmpty()) {
             "The form still has ${validation.size} invalid field(s) after Submit was pressed"
         }
-        check(submissionConfirmed(page, submit, beforeUrl)) {
-            "The page did not confirm that the application was submitted"
-        }
+        check(confirmed) { "The page did not confirm that the application was submitted" }
         val receipt = SubmissionReceipt(
             mode = SubmissionMode.BROWSER,
             reference = page.url(),
@@ -223,8 +241,14 @@ class PlaywrightBrowserApplicationRunner(
         val context = browser.newContext(options)
         context.setDefaultTimeout(properties.actionTimeoutMs)
         context.setDefaultNavigationTimeout(properties.navigationTimeoutMs)
+        val blockedHosts = linkedSetOf<String>()
         context.route("**/*") { route ->
-            if (urlPolicy.allows(route.request().url())) route.resume() else route.abort()
+            if (urlPolicy.allows(route.request().url())) {
+                route.resume()
+            } else {
+                URI.create(route.request().url()).host?.lowercase()?.let(blockedHosts::add)
+                route.abort()
+            }
         }
         val target = command.resume?.currentUrl?.takeIf { urlPolicy.allows(it) } ?: command.formUrl
         val page = context.newPage()
@@ -235,7 +259,7 @@ class PlaywrightBrowserApplicationRunner(
                 .setTimeout(properties.navigationTimeoutMs),
         )
         urlPolicy.requireAllowed(page.url())
-        return Session(command.formUrl, context, page, checkpoint(page.url(), emptyList()))
+        return Session(command.formUrl, context, page, checkpoint(page.url(), emptyList()), blockedHosts)
     }
 
     private fun browser(): Browser {
@@ -247,6 +271,31 @@ class PlaywrightBrowserApplicationRunner(
         playwright = createdPlaywright
         browser = createdBrowser
         return createdBrowser
+    }
+
+    internal fun applyActions(
+        page: Page,
+        actions: List<BrowserFillAction>,
+        blockedHosts: MutableSet<String> = linkedSetOf(),
+    ): Pair<List<String>, List<BrowserValidationError>> {
+        val applied = mutableListOf<String>()
+        val errors = mutableListOf<BrowserValidationError>()
+        // Lever parses an uploaded resume and then rewrites name, email, phone and company with the
+        // values its parser read out of the file. Uploading before anything is typed lets the
+        // approved answers land last and win over those guesses.
+        actions.sortedBy { if (it.type == FormFieldType.FILE) 0 else 1 }.forEach { action ->
+            try {
+                apply(page, action, blockedHosts)
+                applied += action.fieldKey
+            } catch (error: BrowserAutocompleteException) {
+                errors += BrowserValidationError(
+                    fieldKey = action.fieldKey,
+                    message = error.message.orEmpty().take(500),
+                    code = "AUTOCOMPLETE_OPTIONS_UNAVAILABLE",
+                )
+            }
+        }
+        return applied to errors
     }
 
     internal fun observeFields(page: Page): List<ObservedFormField> {
@@ -271,7 +320,11 @@ class PlaywrightBrowserApplicationRunner(
         }
     }
 
-    private fun apply(page: Page, action: BrowserFillAction) {
+    internal fun apply(
+        page: Page,
+        action: BrowserFillAction,
+        blockedHosts: MutableSet<String> = linkedSetOf(),
+    ) {
         val locator = page.locator(action.locator)
         check(locator.count() > 0) { "Control ${action.fieldKey} is no longer present" }
         when (action.type) {
@@ -281,6 +334,7 @@ class PlaywrightBrowserApplicationRunner(
                     FilePayload(file.fileName, file.contentType, file.content),
                     Locator.SetInputFilesOptions().setTimeout(properties.actionTimeoutMs),
                 )
+                waitForUpload(page)
             }
             FormFieldType.CHECKBOX -> locator.first().setChecked(
                 requireNotNull(action.checked),
@@ -291,11 +345,77 @@ class PlaywrightBrowserApplicationRunner(
                 Locator.SelectOptionOptions().setTimeout(properties.actionTimeoutMs),
             )
             FormFieldType.RADIO -> selectRadio(locator, requireNotNull(action.value))
+            FormFieldType.COMBOBOX -> fillAutocomplete(
+                page,
+                locator.first(),
+                requireNotNull(action.value),
+                action.fieldKey,
+                blockedHosts,
+            )
             else -> locator.first().fill(
                 requireNotNull(action.value),
                 Locator.FillOptions().setTimeout(properties.actionTimeoutMs),
             )
         }
+    }
+
+    private fun fillAutocomplete(
+        page: Page,
+        control: Locator,
+        value: String,
+        fieldKey: String,
+        blockedHosts: MutableSet<String>,
+    ) {
+        // Ignore unrelated analytics/resources blocked while the page was loading. Requests made
+        // after typing are the useful diagnostic if the suggestions never become available.
+        blockedHosts.clear()
+        control.fill(value, Locator.FillOptions().setTimeout(properties.actionTimeoutMs))
+
+        var offered = 0
+        val deadline = System.nanoTime() + (properties.actionTimeoutMs * 1_000_000).toLong()
+        while (System.nanoTime() < deadline) {
+            val options = autocompleteOptions(page)
+            offered = maxOf(offered, options.size)
+            matchingOption(options, value)?.let { option ->
+                option.click(Locator.ClickOptions().setTimeout(properties.actionTimeoutMs))
+                return
+            }
+            page.waitForTimeout(AUTOCOMPLETE_POLL_MS)
+        }
+
+        val blocked = blockedHosts.sorted().joinToString(", ")
+        val diagnostic = when {
+            blocked.isNotBlank() ->
+                "The suggestions could not load because these hosts are not allowed: $blocked. " +
+                    "Add the required host to PLAYWRIGHT_ALLOWED_HOSTS and try again"
+            offered > 0 ->
+                "$offered suggestion(s) were offered, none of them matched the approved answer and " +
+                    "nothing was selected; answer this field by hand"
+            else ->
+                "The suggestions did not become available within ${properties.actionTimeoutMs.toLong()} ms"
+        }
+        throw BrowserAutocompleteException("Autocomplete field '$fieldKey' was not selected. $diagnostic")
+    }
+
+    private fun autocompleteOptions(page: Page): List<Locator> =
+        visibleLocators(page.locator(AUTOCOMPLETE_OPTION_SELECTOR)).filter { option ->
+            option.getAttribute("aria-disabled") != "true" &&
+                runCatching { option.innerText().trim() }.getOrDefault("").let { text ->
+                    text.isNotBlank() && !AUTOCOMPLETE_LOADING_TEXT.matches(text)
+                }
+        }
+
+    /**
+     * Lever rewrites a typed city into its own canonical form, so an exact match is not guaranteed
+     * and the leading part of the answer is matched too. An unrelated suggestion is never taken:
+     * applying with the wrong location is worse than reporting the field as still unanswered.
+     */
+    private fun matchingOption(options: List<Locator>, value: String): Locator? {
+        val labelled = options.map { it to runCatching { it.innerText().trim() }.getOrDefault("") }
+        val head = value.substringBefore(',').trim().ifBlank { value }
+        return labelled.firstOrNull { (_, text) -> text.equals(value, ignoreCase = true) }?.first
+            ?: labelled.firstOrNull { (_, text) -> text.contains(value, ignoreCase = true) }?.first
+            ?: labelled.firstOrNull { (_, text) -> text.contains(head, ignoreCase = true) }?.first
     }
 
     private fun selectRadio(group: Locator, value: String) {
@@ -308,11 +428,11 @@ class PlaywrightBrowserApplicationRunner(
     }
 
     internal fun validationErrors(page: Page): List<BrowserValidationError> =
-        visibleLocators(page.locator("input:invalid, textarea:invalid, select:invalid"))
+        visibleLocators(page.locator(INVALID_CONTROL_SELECTOR))
             .mapIndexed { index, locator ->
                 index to BrowserValidationError(
                     fieldKey = locator.getAttribute("data-job-agent-field-key"),
-                    message = (locator.evaluate("el => el.validationMessage") as? String)
+                    message = (locator.evaluate(VALIDATION_MESSAGE_SCRIPT) as? String)
                         ?.take(300).orEmpty().ifBlank { "The field is invalid" },
                     code = (locator.evaluate(
                         """el => {
@@ -328,17 +448,66 @@ class PlaywrightBrowserApplicationRunner(
             .map { it.second }
 
     internal fun submitControl(page: Page): Locator {
+        // Lever marks its own submit control, which settles the choice on a page that also carries
+        // secondary buttons such as "Save" or the search form of the job board around the posting.
+        visibleLocators(page.locator(LEVER_SUBMIT_SELECTOR)).singleOrNull()?.let { return it }
         val explicit = visibleLocators(page.locator("form button[type=submit], form input[type=submit]"))
         val candidates = if (explicit.isNotEmpty()) explicit else {
-            visibleLocators(page.locator("form button:not([type])")).filter { control ->
-                val text = runCatching { control.innerText().trim() }.getOrDefault("")
-                SUBMIT_TEXT.containsMatchIn(text)
-            }
+            visibleLocators(page.locator("form button:not([type])"))
         }
-        check(candidates.size == 1) {
-            "Expected exactly one visible submit control, found ${candidates.size}"
+        val named = candidates.filter { SUBMIT_TEXT.containsMatchIn(controlLabel(it)) }
+        val chosen = if (named.isNotEmpty()) named else candidates
+        check(chosen.size == 1) {
+            val labels = chosen.joinToString { controlLabel(it).take(40).ifBlank { "<unnamed>" } }
+            "Expected exactly one visible submit control, found ${chosen.size}" +
+                if (labels.isBlank()) "" else ": $labels"
         }
-        return candidates.single()
+        return chosen.single()
+    }
+
+    private fun controlLabel(control: Locator): String = runCatching {
+        control.innerText().trim().ifBlank { control.getAttribute("value").orEmpty().trim() }
+    }.getOrDefault("")
+
+    /** Text of a visible submit error banner, such as Lever's `.postings-btn-error`. */
+    private fun submissionError(page: Page): String? = visibleLocators(page.locator(SUBMIT_ERROR_SELECTOR))
+        .firstNotNullOfOrNull { banner ->
+            runCatching { banner.innerText().trim() }.getOrNull()?.takeIf { it.isNotBlank() }
+        }
+        ?.take(200)
+
+    /**
+     * Lever renders the posting first and mounts the application form afterwards. Waiting for one
+     * usable control keeps an inspection from reporting a form that is merely not mounted yet.
+     */
+    private fun waitForFormReady(page: Page) {
+        runCatching {
+            page.locator(FORM_READY_SELECTOR).first().waitFor(
+                Locator.WaitForOptions()
+                    .setState(WaitForSelectorState.VISIBLE)
+                    .setTimeout(properties.actionTimeoutMs)
+            )
+        }
+    }
+
+    /**
+     * Waits out the upload round trip and the page update that follows it. Lever answers the upload
+     * with the parsed resume and only then rewrites the contact fields, so returning earlier would
+     * put the remaining actions in a race with that rewrite.
+     */
+    private fun waitForUpload(page: Page) {
+        runCatching {
+            page.waitForLoadState(
+                LoadState.NETWORKIDLE,
+                Page.WaitForLoadStateOptions().setTimeout(properties.actionTimeoutMs),
+            )
+        }
+        runCatching {
+            page.evaluate(
+                DOM_QUIET_SCRIPT,
+                mapOf("quietMs" to UPLOAD_QUIET_MS, "capMs" to properties.actionTimeoutMs),
+            )
+        }
     }
 
     private fun submissionConfirmed(page: Page, submit: Locator, beforeUrl: String): Boolean {
@@ -428,13 +597,62 @@ class PlaywrightBrowserApplicationRunner(
         )
         private const val SUBMIT_CONFIRMATION_POLLS = 10
         private const val SUBMIT_CONFIRMATION_POLL_MS = 250.0
+        private const val AUTOCOMPLETE_POLL_MS = 100.0
+        private const val UPLOAD_QUIET_MS = 400
+        private const val LEVER_SUBMIT_SELECTOR = "#btn-submit, .template-btn-submit"
+        private const val SUBMIT_ERROR_SELECTOR =
+            ".postings-btn-error, .application-error, [class*='submit-error' i], [class*='form-error' i]"
+        private const val FORM_READY_SELECTOR =
+            "form input:not([type=hidden]), form textarea, form select"
+        private const val INVALID_CONTROL_SELECTOR =
+            "input:invalid, textarea:invalid, select:invalid, " +
+                "input[aria-invalid=true], textarea[aria-invalid=true], select[aria-invalid=true]"
+        private const val AUTOCOMPLETE_OPTION_SELECTOR =
+            "[role='listbox'] [role='option'], [role='option'], [data-option-index], " +
+                "[class*='autocomplete' i] [class*='option' i], [class*='suggestion' i], " +
+                "[class*='dropdown-location' i] > *"
+        /** Lever renders its own message next to a control the browser itself considers valid. */
+        private val VALIDATION_MESSAGE_SCRIPT = """
+            el => el.validationMessage ||
+              el.closest('.application-question, [class*="field" i], li, fieldset')
+                ?.querySelector('[class*="error" i], [role="alert"]')?.innerText || ''
+        """.trimIndent()
+        private val DOM_QUIET_SCRIPT = """
+            options => new Promise(resolve => {
+              let quiet;
+              let cap;
+              const finish = () => {
+                clearTimeout(quiet);
+                clearTimeout(cap);
+                observer.disconnect();
+                resolve(true);
+              };
+              const observer = new MutationObserver(() => {
+                clearTimeout(quiet);
+                quiet = setTimeout(finish, options.quietMs);
+              });
+              observer.observe(document.documentElement, {
+                subtree: true, childList: true, attributes: true, characterData: true
+              });
+              quiet = setTimeout(finish, options.quietMs);
+              cap = setTimeout(finish, options.capMs);
+            })
+        """.trimIndent()
+        private val AUTOCOMPLETE_LOADING_TEXT = Regex("(?i)^(loading|загрузка|загружается)[.…]*$")
         private val FIELD_DISCOVERY_SCRIPT = """
             elements => {
+              // A key from an earlier observation must not survive: locators are rebuilt on every
+              // observation, and a stale attribute would keep pointing at a control that the page
+              // may since have replaced or repurposed.
+              document.querySelectorAll('[data-job-agent-field-key]')
+                .forEach(el => el.removeAttribute('data-job-agent-field-key'));
               const isVisible = el => !!el && !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
               const clean = value => (value || '').replace(/\s+/g, ' ').trim();
               const associatedLabels = el => Array.from(el.labels || []).filter(isVisible);
+              // Lever hides the resume input behind a styled "Attach resume" label and hides its
+              // consent checkboxes the same way; a control with a visible label is still usable.
               const isUsableControl = el => isVisible(el) ||
-                ['checkbox', 'radio'].includes((el.getAttribute('type') || '').toLowerCase()) &&
+                ['checkbox', 'radio', 'file'].includes((el.getAttribute('type') || '').toLowerCase()) &&
                   associatedLabels(el).length > 0;
               const visible = elements.filter(isUsableControl);
               const seenRadio = new Set();
@@ -481,6 +699,33 @@ class PlaywrightBrowserApplicationRunner(
                 usedKeys.set(base, count + 1);
                 return count === 0 ? base : `${'$'}{base}-${'$'}{count}`;
               };
+              const quoteAttribute = value => `"${'$'}{String(value)
+                .replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+              const stableLocator = (el, group, fieldKey) => {
+                const tag = el.tagName.toLowerCase();
+                const candidates = [];
+                const dataQa = el.getAttribute('data-qa');
+                if (dataQa) candidates.push(`${'$'}{tag}[data-qa=${'$'}{quoteAttribute(dataQa)}]`);
+                if (el.id) candidates.push(`${'$'}{tag}[id=${'$'}{quoteAttribute(el.id)}]`);
+                const name = el.getAttribute('name');
+                if (name) {
+                  const type = (el.getAttribute('type') || '').toLowerCase();
+                  candidates.push(`${'$'}{tag}${'$'}{type ? `[type=${'$'}{quoteAttribute(type)}]` : ''}` +
+                    `[name=${'$'}{quoteAttribute(name)}]`);
+                }
+                // Only return a semantic/stable selector when it resolves to exactly this control
+                // (or this complete radio group). Lever may rebuild the DOM after resume parsing,
+                // but keeps these attributes while dropping our temporary marker.
+                const stable = candidates.find(selector => {
+                  try {
+                    const matches = Array.from(document.querySelectorAll(selector));
+                    return matches.length === group.length && group.every(control => matches.includes(control));
+                  } catch (_) {
+                    return false;
+                  }
+                });
+                return stable || `[data-job-agent-field-key="${'$'}{fieldKey}"]`;
+              };
               return visible.flatMap((el, index) => {
                 const inputType = (el.getAttribute('type') || 'text').toLowerCase();
                 const radioGroup = inputType === 'radio' ? (el.getAttribute('name') || key(el, index)) : null;
@@ -492,11 +737,13 @@ class PlaywrightBrowserApplicationRunner(
                   : [el];
                 const fieldKey = key(el, index);
                 group.forEach(candidate => candidate.setAttribute('data-job-agent-field-key', fieldKey));
+                const isCombobox = el.getAttribute('role') === 'combobox' ||
+                  !!el.getAttribute('aria-autocomplete') || !!el.getAttribute('aria-controls');
                 const type = el.tagName === 'TEXTAREA' ? 'TEXTAREA' :
                   el.tagName === 'SELECT' ? 'SELECT' : ({
                     email: 'EMAIL', tel: 'PHONE', number: 'NUMBER', date: 'DATE', url: 'URL',
                     radio: 'RADIO', checkbox: 'CHECKBOX', file: 'FILE'
-                  }[inputType] || 'TEXT');
+                  }[inputType] || (isCombobox ? 'COMBOBOX' : 'TEXT'));
                 const options = el.tagName === 'SELECT'
                   ? Array.from(el.options).map(option => option.label || option.textContent || option.value).filter(Boolean)
                   : radioGroup
@@ -512,7 +759,7 @@ class PlaywrightBrowserApplicationRunner(
                   placeholder: el.getAttribute('placeholder'),
                   options,
                   maxLength: el.maxLength > 0 ? el.maxLength : null,
-                  locator: `[data-job-agent-field-key="${'$'}{fieldKey}"]`
+                  locator: stableLocator(el, group, fieldKey)
                 }];
               });
             }

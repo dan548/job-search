@@ -9,7 +9,9 @@ enum class ApplicationStatus { DRAFT, FILLING, NEEDS_INPUT, READY_TO_SUBMIT, SUB
 
 enum class ApplicationRunStatus { RUNNING, NEEDS_INPUT, COMPLETED, FAILED }
 
-enum class FormFieldType { TEXT, TEXTAREA, EMAIL, PHONE, NUMBER, DATE, URL, SELECT, RADIO, CHECKBOX, FILE }
+enum class FormFieldType {
+    TEXT, TEXTAREA, EMAIL, PHONE, NUMBER, DATE, URL, SELECT, RADIO, CHECKBOX, FILE, COMBOBOX,
+}
 
 /** What a form runner reported about a single field, before any answer is chosen. */
 data class ObservedFormField(

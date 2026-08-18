@@ -5,6 +5,9 @@ import th.sibraine.jobagent.shared.ai.AiAnalysisException
 import th.sibraine.jobagent.shared.ai.StructuredOutputClient
 import th.sibraine.jobagent.tailoring.domain.EvidenceKind
 import th.sibraine.jobagent.tailoring.domain.ResumeTailor
+import th.sibraine.jobagent.tailoring.domain.TailoredExperience
+import th.sibraine.jobagent.tailoring.domain.TailoredProject
+import th.sibraine.jobagent.tailoring.domain.TailoredText
 import th.sibraine.jobagent.tailoring.domain.TailoringPlan
 import th.sibraine.jobagent.tailoring.domain.TailoringRequest
 import com.fasterxml.jackson.databind.ObjectMapper
@@ -42,9 +45,48 @@ class OpenAiResumeTailor(
         )
         val output = client.generate(SYSTEM_PROMPT, input, "resume_tailoring_plan", TAILORING_PLAN_SCHEMA)
         return try {
-            objectMapper.readValue(output, TailoringPlan::class.java)
+            objectMapper.readValue(output, TailoringPlan::class.java).normalizeModelOutput()
         } catch (error: Exception) {
             throw AiAnalysisException("OpenAI returned an invalid tailoring plan", error)
+        }
+    }
+
+    private fun TailoringPlan.normalizeModelOutput(): TailoringPlan = copy(
+        experiences = experiences.groupBy { it.sourceElementId }.map { (sourceElementId, sections) ->
+            TailoredExperience(
+                sourceElementId = sourceElementId,
+                achievements = normalizeAchievements(
+                    sections.flatMap { it.achievements },
+                    parentElementId = sourceElementId,
+                ),
+            )
+        },
+        projects = projects.groupBy { it.sourceElementId }.map { (sourceElementId, sections) ->
+            TailoredProject(
+                sourceElementId = sourceElementId,
+                achievements = normalizeAchievements(
+                    sections.flatMap { it.achievements },
+                    parentElementId = sourceElementId,
+                ),
+            )
+        },
+        skillElementIds = skillElementIds.distinct(),
+    )
+
+    private fun normalizeAchievements(
+        achievements: List<TailoredText>,
+        parentElementId: String,
+    ): List<TailoredText> {
+        val normalized = achievements.map { achievement ->
+            if (achievement.sourceElementId == parentElementId) {
+                achievement.copy(sourceElementId = null)
+            } else achievement
+        }
+        val seenSources = mutableSetOf<String>()
+        val seenSourceFreeTexts = mutableSetOf<String>()
+        return normalized.filter { achievement ->
+            achievement.sourceElementId?.let(seenSources::add)
+                ?: seenSourceFreeTexts.add(achievement.text.trim())
         }
     }
 
@@ -86,9 +128,14 @@ class OpenAiResumeTailor(
             Every produced text must cite evidence: elementId values from confirmedResume or factId values
             from verifiedFacts, referenced by exact id.
             Numbers may appear in a text only when the same numbers appear in its cited evidence.
-            sourceElementId must be the confirmed element the text is derived from, or null when the text
-            merges several cited elements.
+            For summary, sourceElementId may only be the supplied summary elementId.
+            For each experience or project achievement, sourceElementId may only be an achievement elementId
+            nested in that same experience or project. Never put an experience or project elementId into an
+            achievement sourceElementId; use null when the text derives from the parent section, a profile fact,
+            or merges several cited elements.
             Reference experiences, projects and skills only by their exact supplied elementId.
+            Return each experience and project sourceElementId at most once. Put all selected achievements for
+            the same experience or project into that single section object.
             Keep every relevant experience; drop only content that is irrelevant to this vacancy.
             Prefer the vacancy vocabulary when it describes the same fact, and preserve the resume language.
             addressedRequirements must contain requirements from the supplied list that the text supports.

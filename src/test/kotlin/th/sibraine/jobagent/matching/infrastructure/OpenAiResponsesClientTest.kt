@@ -14,7 +14,10 @@ import org.springframework.test.web.client.match.MockRestRequestMatchers.content
 import org.springframework.test.web.client.match.MockRestRequestMatchers.method
 import org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo
 import org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess
+import org.springframework.web.client.ResourceAccessException
 import org.springframework.web.client.RestClient
+import java.io.IOException
+import th.sibraine.jobagent.shared.ai.AiRequestTimeoutException
 
 class OpenAiResponsesClientTest {
     private val objectMapper = jacksonObjectMapper()
@@ -73,6 +76,20 @@ class OpenAiResponsesClientTest {
         val client = OpenAiResponsesClient(builder.build(), objectMapper, "test-model")
 
         assertThrows(AiAnalysisException::class.java) {
+            client.generate("system", "input", "vacancy_analysis", mapOf("type" to "object"))
+        }
+        server.verify()
+    }
+
+    @Test
+    fun `reports a request timeout separately`() {
+        val builder = RestClient.builder().baseUrl("https://api.openai.test")
+        val server = MockRestServiceServer.bindTo(builder).build()
+        server.expect(requestTo("https://api.openai.test/v1/responses"))
+            .andRespond { throw ResourceAccessException("I/O error", IOException("Operation timed out")) }
+        val client = OpenAiResponsesClient(builder.build(), objectMapper, "test-model")
+
+        assertThrows(AiRequestTimeoutException::class.java) {
             client.generate("system", "input", "vacancy_analysis", mapOf("type" to "object"))
         }
         server.verify()

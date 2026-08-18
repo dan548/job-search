@@ -8,9 +8,20 @@ class InvalidTailoringPlanException(message: String) : RuntimeException(message)
 class TailoringPlanValidator {
     fun validate(plan: TailoringPlan, resume: StructuredResume, profile: CandidateProfile) {
         val evidence = EvidenceIndex(resume, profile)
+        val narrativeSources = buildSet {
+            resume.experiences.forEach { experience ->
+                add(experience.elementId)
+                addAll(experience.achievements.map { it.elementId })
+            }
+            resume.projects.forEach { project ->
+                add(project.elementId)
+                addAll(project.achievements.map { it.elementId })
+            }
+        }
 
         plan.summary?.let { summary ->
-            validateText(summary, "summary", setOfNotNull(resume.summary?.elementId), evidence)
+            val allowed = setOfNotNull(resume.summary?.elementId)
+            validateText(summary, "summary", allowed, emptySet(), evidence)
         }
 
         requireDistinct(plan.experiences.map { it.sourceElementId }, "experience")
@@ -21,7 +32,15 @@ class TailoringPlanValidator {
                 )
             val allowed = source.achievements.map { it.elementId }.toSet()
             requireDistinct(experience.achievements.mapNotNull { it.sourceElementId }, "experience achievement")
-            experience.achievements.forEach { validateText(it, "experience achievement", allowed, evidence) }
+            experience.achievements.forEach {
+                validateText(
+                    it,
+                    "experience achievement",
+                    allowed,
+                    narrativeSources - (allowed + source.elementId),
+                    evidence,
+                )
+            }
         }
 
         requireDistinct(plan.projects.map { it.sourceElementId }, "project")
@@ -30,7 +49,15 @@ class TailoringPlanValidator {
                 ?: throw InvalidTailoringPlanException("Unknown or unconfirmed project: ${project.sourceElementId}")
             val allowed = source.achievements.map { it.elementId }.toSet()
             requireDistinct(project.achievements.mapNotNull { it.sourceElementId }, "project achievement")
-            project.achievements.forEach { validateText(it, "project achievement", allowed, evidence) }
+            project.achievements.forEach {
+                validateText(
+                    it,
+                    "project achievement",
+                    allowed,
+                    narrativeSources - (allowed + source.elementId),
+                    evidence,
+                )
+            }
         }
 
         requireDistinct(plan.skillElementIds, "skill")
@@ -46,6 +73,7 @@ class TailoringPlanValidator {
         value: TailoredText,
         kind: String,
         allowedSources: Set<String>,
+        forbiddenEvidenceSources: Set<String>,
         evidence: EvidenceIndex,
     ) {
         if (value.text.isBlank()) {
@@ -60,6 +88,9 @@ class TailoringPlanValidator {
             throw InvalidTailoringPlanException("Tailored $kind has no evidence: ${value.text}")
         }
         value.evidence.forEach { ref ->
+            if (ref.kind == EvidenceKind.RESUME_ELEMENT && ref.id in forbiddenEvidenceSources) {
+                throw InvalidTailoringPlanException("Tailored $kind cites evidence from a foreign section: ${ref.id}")
+            }
             evidence.textOrNull(ref) ?: throw InvalidTailoringPlanException(
                 "Unknown or unconfirmed evidence: ${ref.kind} ${ref.id}"
             )
