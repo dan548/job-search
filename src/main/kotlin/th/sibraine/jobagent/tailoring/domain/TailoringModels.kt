@@ -64,6 +64,7 @@ data class TailoringGap(
     val requirement: String,
     val importance: RequirementImportance,
     val status: RequirementStatus,
+    val relatedRequirements: List<String> = emptyList(),
 )
 
 enum class TailoringQuestionKind { EVIDENCE, PREFERENCE }
@@ -75,15 +76,32 @@ data class TailoringGapGroup(
     val status: RequirementStatus,
     val kind: TailoringQuestionKind = TailoringQuestionKind.EVIDENCE,
     val requirements: List<String> = emptyList(),
+    val decision: TailoringGapDecision? = null,
 )
 
 data class TailoringQuestion(
     val questionId: String,
+    val groupId: String = "",
     val question: String,
     val requirement: String,
     val importance: RequirementImportance,
     val kind: TailoringQuestionKind = TailoringQuestionKind.EVIDENCE,
     val relatedRequirements: List<String> = emptyList(),
+    val decision: TailoringGapDecision? = null,
+)
+
+enum class TailoringGapDecisionType {
+    CONFIRMED_FACT_ADDED,
+    CANNOT_CONFIRM,
+    NOT_APPLICABLE,
+    ACCEPT_RISK,
+}
+
+data class TailoringGapDecision(
+    val type: TailoringGapDecisionType,
+    val explanation: String,
+    val confirmedFactId: String? = null,
+    val decidedAt: Instant,
 )
 
 data class TailoringRequest(

@@ -27,6 +27,7 @@ class TailorResumeUseCase(
     private val tailor: ResumeTailor,
     private val planValidator: TailoringPlanValidator,
     private val planBuilder: TailoringPlanBuilder,
+    private val gapDecisions: TailoringGapDecisionService,
     private val resumeBuilder: TailoredResumeBuilder,
     private val resumeValidator: StructuredResumeValidator,
     private val clock: Clock,
@@ -67,7 +68,15 @@ class TailorResumeUseCase(
 
         val resume = resumeBuilder.build(confirmed, profile, draft)
         resumeValidator.validate(resume)
-        val plan = planBuilder.build(draft, base?.structuredResume ?: canonical, confirmed, resume, profile, analysis.match)
+        val plan = planBuilder.build(
+            draft,
+            base?.structuredResume ?: canonical,
+            confirmed,
+            resume,
+            profile,
+            analysis.match,
+            gapDecisions.forVacancy(candidateProfileId, vacancyId),
+        )
 
         return variants.save(
             ResumeVariantEntity(

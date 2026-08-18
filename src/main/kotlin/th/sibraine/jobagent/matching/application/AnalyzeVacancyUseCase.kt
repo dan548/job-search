@@ -11,7 +11,11 @@ import java.time.Clock
 import java.time.Instant
 import java.util.UUID
 
-data class AnalysisResult(val analysis: VacancyAnalysis, val match: MatchResult)
+data class AnalysisResult(
+    val analysis: VacancyAnalysis,
+    val match: MatchResult,
+    val change: MatchResultChange? = null,
+)
 
 @Service
 class AnalyzeVacancyUseCase(
@@ -25,6 +29,8 @@ class AnalyzeVacancyUseCase(
     private val matrixBuilder: RequirementEvidenceMatrixBuilder,
     private val clock: Clock,
 ) {
+    private val changeBuilder = MatchResultChangeBuilder()
+
     @Transactional
     fun execute(candidateProfileId: UUID, vacancyId: UUID): AnalysisResult {
         val profile = profiles.findById(candidateProfileId).orElseThrow {
@@ -46,11 +52,13 @@ class AnalyzeVacancyUseCase(
         val match = rawMatch.copy(
             requirementEvidenceMatrix = matrixBuilder.build(profile, analysis, rawMatch),
         )
-        matches.findByCandidateProfileIdAndVacancyId(candidateProfileId, vacancyId)?.apply {
+        val storedMatch = matches.findByCandidateProfileIdAndVacancyId(candidateProfileId, vacancyId)
+        val previousMatch = storedMatch?.result
+        storedMatch?.apply {
             result = match
             createdAt = now
         } ?: matches.save(MatchResultEntity(UUID.randomUUID(), candidateProfileId, vacancyId, match, now))
-        return AnalysisResult(analysis, match)
+        return AnalysisResult(analysis, match, changeBuilder.build(previousMatch, match))
     }
 
     @Transactional(readOnly = true)

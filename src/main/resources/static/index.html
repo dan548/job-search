@@ -66,7 +66,12 @@
           <label><span>Название identity</span><input name="label" required placeholder="Например, Backend / международный"></label>
           <label><span>Имя в резюме</span><input name="displayName" required></label>
           <label><span>Позиционирование</span><input name="headline" placeholder="Staff Backend Engineer"></label>
-          <label><span>Навыки</span><input name="skills" placeholder="Kotlin, Kafka, PostgreSQL"></label>
+          <div class="full skill-editor-field">
+            <span class="field-label">Навыки</span>
+            <div class="skill-add-row"><input id="profile-skill-input" autocomplete="off" placeholder="Например, Kotlin"><button id="add-profile-skill" class="button secondary" type="button">Добавить в список</button></div>
+            <small>Добавляйте по одному или вставьте несколько через запятую. После изменений сохраните профиль.</small>
+            <div id="profile-skill-list" class="skill-editor-list" aria-live="polite"></div>
+          </div>
           <div class="full form-action"><button class="button primary" type="submit">Сохранить профиль</button></div>
         </form>
         <div class="profile-editor-grid">

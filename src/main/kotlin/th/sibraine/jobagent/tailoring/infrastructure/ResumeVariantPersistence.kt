@@ -39,7 +39,7 @@ class ResumeVariantEntity(
     val templateVersion: Int,
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(nullable = false, columnDefinition = "jsonb")
-    val plan: TailoringPlan,
+    var plan: TailoringPlan,
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(nullable = false, columnDefinition = "jsonb")
     val resume: StructuredResume,

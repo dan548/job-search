@@ -80,6 +80,34 @@ class TailoringPlanBuilderTest {
         assertTrue(result.questions.any { it.kind == TailoringQuestionKind.PREFERENCE })
     }
 
+    @Test
+    fun `carries a saved decision into a rebuilt plan`() {
+        val decision = TailoringGapDecision(
+            TailoringGapDecisionType.NOT_APPLICABLE,
+            "Не относится к этой роли",
+            decidedAt = java.time.Instant.parse("2026-08-18T08:00:00Z"),
+        )
+        val resume = StructuredResume()
+
+        val result = builder.build(
+            plan = TailoringPlan(),
+            base = resume,
+            confirmed = resume,
+            tailored = resume,
+            profile = CandidateProfile(UUID.randomUUID(), GeneralInfo("Candidate")),
+            match = MatchResult(
+                score = 0,
+                recommendation = Recommendation.MAYBE,
+                reasoningSummary = "",
+                requirementEvidenceMatrix = listOf(row("Kotlin/JVM")),
+            ),
+            decisions = mapOf("jvm" to decision),
+        )
+
+        assertEquals(decision, result.gapGroups.single().decision)
+        assertEquals(decision, result.questions.single().decision)
+    }
+
     private fun build(vararg rows: RequirementEvidenceRow): TailoringPlan {
         val resume = StructuredResume()
         return builder.build(

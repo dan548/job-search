@@ -31,6 +31,7 @@ class TailorResumeUseCaseTest {
     private val analyzeVacancy = mockk<AnalyzeVacancyUseCase>()
     private val resumeImports = mockk<ResumeImportService>()
     private val variants = mockk<ResumeVariantJpaRepository>()
+    private val gapDecisions = mockk<TailoringGapDecisionService>()
     private val clock = Clock.fixed(Instant.parse("2026-08-17T10:00:00Z"), ZoneOffset.UTC)
     private val profileId = UUID.randomUUID()
     private val vacancyId = UUID.randomUUID()
@@ -122,6 +123,7 @@ class TailorResumeUseCaseTest {
         },
         planValidator = TailoringPlanValidator(),
         planBuilder = TailoringPlanBuilder(),
+        gapDecisions = gapDecisions,
         resumeBuilder = TailoredResumeBuilder(),
         resumeValidator = StructuredResumeValidator(),
         clock = clock,
@@ -135,6 +137,7 @@ class TailorResumeUseCaseTest {
         every { analyzeVacancy.get(profileId, vacancyId) } returns AnalysisResult(analysis(), match())
         every { resumeImports.latestConfirmedOrNull(profileId) } returns confirmedImport()
         every { variants.save(any()) } answers { firstArg<ResumeVariantEntity>().apply { version = 7 } }
+        every { gapDecisions.forVacancy(profileId, vacancyId) } returns emptyMap()
     }
 
     private fun reuse(elementId: String, text: String) = TailoredText(

@@ -3,6 +3,8 @@ package th.sibraine.jobagent.matching.domain
 import th.sibraine.jobagent.candidate.domain.CandidateProfile
 
 class RequirementEvidenceMatrixBuilder {
+    private val themes = RequirementThemeClassifier()
+
     fun build(
         profile: CandidateProfile,
         analysis: VacancyAnalysis,
@@ -35,7 +37,7 @@ class RequirementEvidenceMatrixBuilder {
         val blockers = result.hardBlockers.map(::normalize).toSet()
         val verifiedFacts = profile.facts.filter { it.verified }.associateBy { it.factId }
 
-        return requirements.map { (key, draft) ->
+        val exactRows = requirements.map { (key, draft) ->
             val match = matches[key]
             val isBlocked = key in blockers
             val status = when {
@@ -55,7 +57,27 @@ class RequirementEvidenceMatrixBuilder {
                 },
             )
         }
+        return groupRelated(exactRows)
     }
+
+    private fun groupRelated(rows: List<RequirementEvidenceRow>): List<RequirementEvidenceRow> = rows
+        .groupBy { themes.classify(it.requirement) }
+        .values
+        .map { related ->
+            if (related.size == 1) return@map related.single()
+            val theme = themes.classify(related.first().requirement)
+            RequirementEvidenceRow(
+                requirement = if (theme.canonical) theme.title else related.first().requirement,
+                importance = related.maxBy { it.importance.priority }.importance,
+                sources = related.flatMap { it.sources }.distinct(),
+                status = related.maxBy { it.status.priority }.status,
+                matchStrength = related.mapNotNull { it.matchStrength }.maxOrNull(),
+                evidence = related.flatMap { it.evidence }.distinctBy { it.factId },
+                relatedRequirements = related.flatMap {
+                    it.relatedRequirements.ifEmpty { listOf(it.requirement) }
+                }.distinct(),
+            )
+        }
 
     private fun add(
         requirements: LinkedHashMap<String, RequirementDraft>,
@@ -86,6 +108,14 @@ class RequirementEvidenceMatrixBuilder {
             RequirementImportance.HARD_REQUIREMENT -> 3
             RequirementImportance.SOFT_REQUIREMENT -> 2
             RequirementImportance.NICE_TO_HAVE -> 1
+        }
+
+    private val RequirementStatus.priority: Int
+        get() = when (this) {
+            RequirementStatus.BLOCKED -> 4
+            RequirementStatus.MISSING -> 3
+            RequirementStatus.UNASSESSED -> 2
+            RequirementStatus.MATCHED -> 1
         }
 
     private data class RequirementDraft(

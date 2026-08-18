@@ -74,4 +74,67 @@ class RequirementEvidenceMatrixBuilderTest {
 
         assertEquals(RequirementStatus.BLOCKED, builder.build(profile, analysis, match).single().status)
     }
+
+    @Test
+    fun `collapses repeated requirements from a real vacancy into auditable themes`() {
+        val profile = CandidateProfile(UUID.randomUUID(), GeneralInfo("Candidate"))
+        val analysis = VacancyAnalysis(
+            role = "Kotlin Java Internal Tools Developer",
+            seniority = null,
+            requiredSkills = listOf(
+                "Java and/or Kotlin on JVM",
+                "Kotlin/JVM",
+                "Gradle",
+                "Practical experience with Python",
+                "Solid SQL knowledge (SQLite, MySQL, PostgreSQL)",
+            ),
+            hardRequirements = listOf(
+                "6+ years of experience with Java and/or Kotlin on JVM",
+                "Good understanding of the JVM ecosystem",
+                "Dependency management",
+                "Modular builds",
+                "Object-oriented programming",
+                "SOLID principles",
+                "Clean architecture",
+                "Ability to write clean, reliable, high-performance code and cover critical logic with tests",
+                "Debugging, profiling, logging, and performance optimization",
+                "Linux, common tools, and Linux ecosystem",
+                "Understanding of Kubernetes, Docker and nearby technologies",
+                "Understanding of 2D / 3D technologies and software, for example OpenGL, WebGL, Raytracing, Blender",
+                "Ability to work with math-heavy, data-heavy, or algorithmic tasks",
+            ),
+            languageRequirements = listOf("Fluent in English"),
+            locationConstraints = listOf("Tbilisi", "Belgrade", "Lisbon", "Madrid", "Riga", "Tallinn", "Valencia", "Yerevan"),
+            softRequirements = listOf("Remote"),
+        )
+        val match = MatchResult(
+            score = 52,
+            recommendation = Recommendation.MAYBE,
+            matchedRequirements = listOf(
+                MatchedRequirement("Good understanding of the JVM ecosystem, particularly Gradle, modular builds, and debugging", 0.9, emptyList()),
+                MatchedRequirement("Ability to cover critical logic with tests", 0.8, emptyList()),
+                MatchedRequirement("Understanding of Docker and nearby technologies", 0.8, emptyList()),
+                MatchedRequirement("Professional communication in English", 0.8, emptyList()),
+                MatchedRequirement("Ability to work with algorithmic or math-heavy tasks", 0.8, emptyList()),
+            ),
+            missingRequirements = listOf(
+                MissingRequirement("6+ years of experience with Java and/or Kotlin on JVM; only 5+ years is verified", RequirementImportance.HARD_REQUIREMENT),
+                MissingRequirement("Solid SQL knowledge demonstrated through verified experience", RequirementImportance.HARD_REQUIREMENT),
+                MissingRequirement("Knowledge of Linux, common tools, and Linux ecosystem demonstrated through verified experience", RequirementImportance.HARD_REQUIREMENT),
+                MissingRequirement("Experience with Blender, rendering, 2D/3D processing, geometry, or model conversion", RequirementImportance.HARD_REQUIREMENT),
+            ),
+            reasoningSummary = "Partial match",
+        )
+
+        val rows = builder.build(profile, analysis, match)
+
+        assertEquals(9, rows.size, rows.joinToString { it.requirement })
+        val jvm = rows.single { it.requirement == "Java, Kotlin и экосистема JVM" }
+        assertEquals(RequirementStatus.MISSING, jvm.status)
+        assertEquals(9, jvm.relatedRequirements.size)
+        assertEquals(1, rows.count { it.requirement == "Локация и переезд" })
+        assertEquals(8, rows.single { it.requirement == "Локация и переезд" }.relatedRequirements.size)
+        assertEquals(1, rows.count { it.requirement == "Архитектура, качество кода и тестирование" })
+        assertEquals(1, rows.count { it.requirement == "Python, Blender и 2D/3D-технологии" })
+    }
 }

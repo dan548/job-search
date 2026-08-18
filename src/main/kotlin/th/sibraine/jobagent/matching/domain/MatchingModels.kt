@@ -45,6 +45,7 @@ data class RequirementEvidenceRow(
     val status: RequirementStatus,
     val matchStrength: Double? = null,
     val evidence: List<EvidenceFact> = emptyList(),
+    val relatedRequirements: List<String> = emptyList(),
 )
 
 data class EvidenceFact(

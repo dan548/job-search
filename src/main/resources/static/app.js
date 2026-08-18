@@ -1,4 +1,4 @@
-const state = { profile: null, identities: [], preview: null, vacancies: [], vacancy: null, analysis: null, variant: null, draft: null, resumeSelection: null, resumePhotoDataUri: null, settings: null, catalog: [], browserSession: null, browserAudit: [], browserDiagnostics: [], vacancySelection: 0 };
+const state = { profile: null, identities: [], preview: null, vacancies: [], vacancy: null, analysis: null, variant: null, draft: null, resumeSelection: null, resumePhotoDataUri: null, settings: null, catalog: [], browserSession: null, browserAudit: [], browserDiagnostics: [], vacancySelection: 0, profileSkillsDraft: [] };
 
 const $ = (selector) => document.querySelector(selector);
 const escapeHtml = (value = "") => String(value).replace(/[&<>'"]/g, (char) => ({
@@ -60,7 +60,7 @@ function renderProfile() {
   panel.innerHTML = `
     <div class="profile-name">${escapeHtml(state.profile.generalInfo.displayName)}</div>
     <p class="profile-headline">${escapeHtml(state.profile.generalInfo.headline || state.profile.roles?.[0] || "Профиль кандидата")}</p>
-    <div class="skill-list">${skills.slice(0, 12).map((skill) => `<span class="skill">${escapeHtml(skill)}</span>`).join("") || '<span class="skill">Навыки ещё не добавлены</span>'}</div>
+    <div class="skill-list profile-skill-list">${skills.map((skill) => `<span class="skill">${escapeHtml(skill)}</span>`).join("") || '<span class="skill muted-skill">Навыки ещё не добавлены</span>'}</div>
     <div class="profile-stats"><div><b>${skills.length}</b><span>навыков</span></div><div><b>${state.profile.experiences?.length || 0}</b><span>мест работы</span></div><div><b>${state.profile.contacts?.length || 0}</b><span>контактов</span></div><div><b>${verified}</b><span>фактов</span></div></div>`;
 }
 
@@ -94,7 +94,8 @@ function renderProfileEditor() {
   form.elements.label.value = state.profile.label || state.profile.generalInfo.displayName;
   form.elements.displayName.value = state.profile.generalInfo.displayName;
   form.elements.headline.value = state.profile.generalInfo.headline || "";
-  form.elements.skills.value = [...(state.profile.skills || [])].join(", ");
+  state.profileSkillsDraft = [...(state.profile.skills || [])];
+  renderProfileSkillEditor();
   $("#contact-list").innerHTML = (state.profile.contacts || []).map((contact) => `
     <div class="editable-item"><div><strong>${escapeHtml(contact.value)}</strong><small>${escapeHtml(contact.type)}${contact.label ? ` · ${escapeHtml(contact.label)}` : ""}</small></div>
     <div class="editable-actions"><button type="button" data-edit-contact="${escapeHtml(contact.elementId)}">Изменить</button><button type="button" data-delete data-delete-contact="${escapeHtml(contact.elementId)}">Удалить</button></div></div>`
@@ -107,6 +108,32 @@ function renderProfileEditor() {
   $("#contact-list").querySelectorAll("[data-delete-contact]").forEach((button) => button.addEventListener("click", () => deleteProfileItem("contacts", button.dataset.deleteContact)));
   $("#experience-list").querySelectorAll("[data-edit-experience]").forEach((button) => button.addEventListener("click", () => editExperience(button.dataset.editExperience)));
   $("#experience-list").querySelectorAll("[data-delete-experience]").forEach((button) => button.addEventListener("click", () => deleteProfileItem("experiences", button.dataset.deleteExperience)));
+}
+
+function renderProfileSkillEditor() {
+  const list = $("#profile-skill-list");
+  if (!list) return;
+  list.innerHTML = state.profileSkillsDraft.length
+    ? state.profileSkillsDraft.map((skill, index) => `<span class="editable-skill"><span>${escapeHtml(skill)}</span><button type="button" data-remove-profile-skill="${index}" aria-label="Удалить навык ${escapeHtml(skill)}" title="Удалить">×</button></span>`).join("")
+    : '<span class="skill-editor-empty">Навыки пока не добавлены.</span>';
+  list.querySelectorAll("[data-remove-profile-skill]").forEach((button) => button.addEventListener("click", () => {
+    state.profileSkillsDraft.splice(Number(button.dataset.removeProfileSkill), 1);
+    renderProfileSkillEditor();
+  }));
+}
+
+function addProfileSkills() {
+  const input = $("#profile-skill-input");
+  const candidates = input.value.split(/[,\n]/).map((value) => value.trim()).filter(Boolean);
+  if (!candidates.length) { input.focus(); return; }
+  const known = new Set(state.profileSkillsDraft.map((skill) => skill.toLocaleLowerCase()));
+  candidates.forEach((skill) => {
+    const key = skill.toLocaleLowerCase();
+    if (!known.has(key)) { state.profileSkillsDraft.push(skill); known.add(key); }
+  });
+  input.value = "";
+  renderProfileSkillEditor();
+  input.focus();
 }
 
 function reviewElements(resume) {
@@ -318,6 +345,24 @@ function coverLetterMarkup(coverLetter) {
   </section>`;
 }
 
+function analysisChangeMarkup(change) {
+  if (!change) return "";
+  const delta = change.scoreAfter - change.scoreBefore;
+  const deltaLabel = delta > 0 ? `+${delta}` : String(delta);
+  const confirmed = (change.newlyConfirmed || []).map((item) => {
+    const evidence = (item.evidence || []).map((fact) => fact.text).filter(Boolean);
+    return `<li><b>${escapeHtml(item.requirement)}</b>${evidence.length ? `<small>Подтверждение: ${escapeHtml(evidence.join(" · "))}</small>` : ""}</li>`;
+  }).join("");
+  const remaining = (change.stillWithoutEvidence || []).map((requirement) => `<li>${escapeHtml(requirement)}</li>`).join("");
+  return `<section class="analysis-change">
+    <div class="analysis-change-score"><span>Оценка до и после</span><b>${change.scoreBefore} → ${change.scoreAfter}</b><strong class="${delta > 0 ? "positive" : delta < 0 ? "negative" : ""}">${escapeHtml(deltaLabel)}</strong></div>
+    <div class="analysis-change-columns">
+      <div><h4>Стало подтверждено</h4>${confirmed ? `<ul>${confirmed}</ul>` : '<p>Ни одно новое требование пока не получило достаточного подтверждения.</p>'}</div>
+      <div><h4>Всё ещё без доказательств</h4>${remaining ? `<details><summary>${escapeHtml(countLabel(change.stillWithoutEvidence.length, ["требование", "требования", "требований"]))}</summary><ul>${remaining}</ul></details>` : '<p>Требований без доказательств не осталось.</p>'}</div>
+    </div>
+  </section>`;
+}
+
 function renderAnalysis() {
   const panel = $("#analysis-panel");
   if (!state.analysis) { panel.classList.add("hidden"); renderVariant(); return; }
@@ -326,7 +371,11 @@ function renderAnalysis() {
   const matched = matrix.filter((row) => row.status === "MATCHED").length;
   const missing = matrix.filter((row) => row.status === "MISSING" || row.status === "BLOCKED").length;
   const unassessed = matrix.filter((row) => row.status === "UNASSESSED").length;
-  const matrixRow = (row) => `<div class="matrix-row"><span>${escapeHtml(row.requirement)}</span><b class="status-${row.status}">${escapeHtml(requirementStatusLabel(row.status))}</b></div>`;
+  const matrixRow = (row) => {
+    const related = row.relatedRequirements || [];
+    const originals = related.length > 1 ? `<details><summary>Исходные формулировки (${related.length})</summary><ul>${related.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></details>` : "";
+    return `<div class="matrix-row"><div><span>${escapeHtml(row.requirement)}</span>${originals}</div><b class="status-${row.status}">${escapeHtml(requirementStatusLabel(row.status))}</b></div>`;
+  };
   const visibleRows = matrix.slice(0, 12);
   const remainingRows = matrix.slice(12);
   panel.innerHTML = `<div class="analysis-top">
@@ -335,6 +384,7 @@ function renderAnalysis() {
     <button id="reanalyze" class="button secondary" type="button">Обновить анализ</button>
   </div>
   <div class="analysis-summary"><span>${escapeHtml(countLabel(matched, ["требование подтверждено", "требования подтверждены", "требований подтверждено"]))}</span><span class="${missing ? "summary-danger" : ""}">${escapeHtml(countLabel(missing, ["требование не подтверждено", "требования не подтверждены", "требований не подтверждено"]))}</span><span>${escapeHtml(countLabel(unassessed, ["требование не оценено", "требования не оценены", "требований не оценено"]))}</span></div>
+  ${analysisChangeMarkup(state.analysis.change)}
   <div class="matrix">${visibleRows.map(matrixRow).join("")}</div>${remainingRows.length ? `<details class="matrix-more"><summary>Показать остальные требования (${remainingRows.length})</summary><div class="matrix">${remainingRows.map(matrixRow).join("")}</div></details>` : ""}`;
   panel.classList.remove("hidden");
   $("#reanalyze").addEventListener("click", analyzeSelectedVacancy);
@@ -401,6 +451,7 @@ function renderVariant() {
     $("#approve-variant").addEventListener("click", approveVariantReview);
   }
   details.querySelectorAll("[data-gap-answer]").forEach((form) => form.addEventListener("submit", saveGapFact));
+  details.querySelectorAll("[data-gap-decision]").forEach((button) => button.addEventListener("click", saveGapDecision));
   $("#generate-cover-letter").addEventListener("click", generateCoverLetter);
   $("#copy-cover-letter")?.addEventListener("click", copyCoverLetter);
   renderResumeSelection();
@@ -418,16 +469,26 @@ function tailoringGapGroupMarkup(group) {
   const requirements = group.requirements || [];
   const details = requirements.length > 1 ? `<details class="question-requirements"><summary>Исходные требования (${requirements.length})</summary><ul>${requirements.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></details>` : "";
   const action = group.kind === "PREFERENCE" ? '<small class="risk-group-action">Проверяется в настройках отклика</small>' : "";
-  return `<article class="risk-group"><div><b>${escapeHtml(group.title)}</b><span class="status-${group.status}">${escapeHtml(requirementStatusLabel(group.status))} · ${escapeHtml(requirementImportanceLabel(group.importance))}</span></div>${action}${details}</article>`;
+  const decision = group.decision ? `<div class="gap-decision-summary"><b>${escapeHtml(gapDecisionLabel(group.decision.type))}</b><span>${escapeHtml(group.decision.explanation)}</span></div>` : "";
+  return `<article class="risk-group"><div><b>${escapeHtml(group.title)}</b><span class="status-${group.status}">${escapeHtml(requirementStatusLabel(group.status))} · ${escapeHtml(requirementImportanceLabel(group.importance))}</span></div>${action}${decision}${details}</article>`;
 }
 
 function tailoringQuestionMarkup(question) {
   const related = question.relatedRequirements || [];
   const details = related.length > 1 ? `<details class="question-requirements"><summary>Какие требования объединены (${related.length})</summary><ul>${related.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></details>` : "";
   if (question.kind === "PREFERENCE") {
-    return `<article class="gap-answer preference-question"><b>${escapeHtml(question.requirement)}</b><small>${escapeHtml(requirementImportanceLabel(question.importance))}</small><p>${escapeHtml(question.question)}</p>${details}<a class="button secondary" href="#application-settings-form">Проверить настройки отклика</a></article>`;
+    return `<article class="gap-answer preference-question" data-gap-question="${escapeHtml(question.questionId)}"><b>${escapeHtml(question.requirement)}</b><small>${escapeHtml(requirementImportanceLabel(question.importance))}</small><p>${escapeHtml(question.question)}</p>${details}${gapDecisionControls(question)}<a class="button secondary" href="#application-settings-form">Проверить настройки отклика</a></article>`;
   }
-  return `<form class="gap-answer" data-gap-answer="${escapeHtml(question.questionId)}"><b>${escapeHtml(question.requirement)}</b><small>${escapeHtml(requirementImportanceLabel(question.importance))}</small><p>${escapeHtml(question.question)}</p>${details}<textarea name="text" rows="3" maxlength="4000" required placeholder="Например: проект, период, ваша роль, технология и измеримый результат"></textarea><div><select name="type" aria-label="Тип факта"><option value="EXPERIENCE">Опыт</option><option value="SKILL">Навык</option><option value="PROJECT">Проект</option><option value="EDUCATION">Образование</option><option value="CERTIFICATION">Сертификация</option><option value="OTHER">Другое</option></select><button class="button secondary" type="submit">Добавить факт и обновить анализ</button></div></form>`;
+  return `<form class="gap-answer" data-gap-answer="${escapeHtml(question.questionId)}" data-gap-question="${escapeHtml(question.questionId)}"><b>${escapeHtml(question.requirement)}</b><small>${escapeHtml(requirementImportanceLabel(question.importance))}</small><p>${escapeHtml(question.question)}</p>${details}${gapDecisionControls(question)}<textarea name="text" rows="3" maxlength="4000" required placeholder="Например: проект, период, ваша роль, технология и измеримый результат"></textarea><div><select name="type" aria-label="Тип факта"><option value="EXPERIENCE">Опыт</option><option value="SKILL">Навык</option><option value="PROJECT">Проект</option><option value="EDUCATION">Образование</option><option value="CERTIFICATION">Сертификация</option><option value="OTHER">Другое</option></select><button class="button secondary" type="submit">Добавить подтверждаемый факт</button></div></form>`;
+}
+
+function gapDecisionLabel(type) {
+  return ({ CONFIRMED_FACT_ADDED: "Добавлен подтверждённый факт", CANNOT_CONFIRM: "Не могу подтвердить", NOT_APPLICABLE: "Не относится ко мне", ACCEPT_RISK: "Риск принят" })[type] || type;
+}
+
+function gapDecisionControls(question) {
+  const current = question.decision ? `<div class="gap-decision-summary"><b>${escapeHtml(gapDecisionLabel(question.decision.type))}</b><span>${escapeHtml(question.decision.explanation)}</span></div>` : "";
+  return `${current}<div class="gap-decision-controls"><input name="decisionExplanation" maxlength="2000" placeholder="Комментарий к решению (необязательно)"><div><button class="button secondary" type="button" data-gap-decision="CANNOT_CONFIRM">Не могу подтвердить</button><button class="button secondary" type="button" data-gap-decision="NOT_APPLICABLE">Не относится ко мне</button><button class="button secondary" type="button" data-gap-decision="ACCEPT_RISK">Принять риск</button></div></div>`;
 }
 
 async function saveGapFact(event) {
@@ -437,13 +498,35 @@ async function saveGapFact(event) {
   const values = Object.fromEntries(new FormData(form));
   busy(button, true, "Сохраняем…");
   try {
-    state.profile = await request("/api/v1/candidate-profile/facts", {
-      method: "POST",
-      body: { type: values.type, text: values.text.trim() },
+    await request(`/api/v1/resume-variants/${state.variant.variantId}/gap-decisions/${encodeURIComponent(form.dataset.gapAnswer)}`, {
+      method: "PUT",
+      body: { type: "CONFIRMED_FACT_ADDED", factType: values.type, factText: values.text.trim(), explanation: values.decisionExplanation?.trim() || null },
     });
+    state.profile = await request("/api/v1/candidate-profile");
     renderProfile();
     await analyzeSelectedVacancy();
     toast("Факт сохранён в профиле, анализ обновлён — создайте новую версию резюме");
+  } catch (error) { toast(error.message, true); }
+  finally { busy(button, false); }
+}
+
+async function saveGapDecision(event) {
+  const button = event.currentTarget;
+  const card = button.closest("[data-gap-question]");
+  const questionId = card?.dataset.gapQuestion;
+  if (!state.variant || !questionId) return;
+  busy(button, true, "Сохраняем…");
+  try {
+    const explanation = card.querySelector('[name="decisionExplanation"]')?.value.trim() || null;
+    const decision = await request(`/api/v1/resume-variants/${state.variant.variantId}/gap-decisions/${encodeURIComponent(questionId)}`, {
+      method: "PUT",
+      body: { type: button.dataset.gapDecision, explanation },
+    });
+    state.variant.plan.questions = state.variant.plan.questions.map((item) => item.questionId === questionId ? { ...item, decision } : item);
+    const groupId = state.variant.plan.questions.find((item) => item.questionId === questionId)?.groupId;
+    state.variant.plan.gapGroups = (state.variant.plan.gapGroups || []).map((item) => item.groupId === groupId ? { ...item, decision } : item);
+    renderVariant();
+    toast("Решение сохранено для следующих повторных анализов");
   } catch (error) { toast(error.message, true); }
   finally { busy(button, false); }
 }
@@ -1316,6 +1399,10 @@ $("#identity-select").addEventListener("change", (event) => switchIdentity(event
 $("#new-identity").addEventListener("click", createIdentity);
 $("#edit-profile").addEventListener("click", () => { renderProfileEditor(); $("#profile-editor").classList.remove("hidden"); });
 $("#close-profile-editor").addEventListener("click", () => $("#profile-editor").classList.add("hidden"));
+$("#add-profile-skill").addEventListener("click", addProfileSkills);
+$("#profile-skill-input").addEventListener("keydown", (event) => {
+  if (event.key === "Enter") { event.preventDefault(); addProfileSkills(); }
+});
 $("#selection-defaults").addEventListener("click", () => {
   document.querySelectorAll("[data-selection-kind]").forEach((input) => input.checked = input.dataset.default === "true");
   clearResumePhoto();
@@ -1327,7 +1414,7 @@ $("#profile-details-form").addEventListener("submit", async (event) => {
   const form = event.currentTarget; const button = form.querySelector("button[type=submit]"); busy(button, true, "Сохраняем…");
   try {
     const values = Object.fromEntries(new FormData(form));
-    const profile = await request("/api/v1/candidate-profile/details", { method: "PUT", body: { ...values, skills: values.skills.split(",").map((item) => item.trim()).filter(Boolean) } });
+    const profile = await request("/api/v1/candidate-profile/details", { method: "PUT", body: { ...values, skills: state.profileSkillsDraft } });
     await refreshProfile(profile); toast("Профиль обновлён");
   } catch (error) { toast(error.message, true); } finally { busy(button, false); }
 });
