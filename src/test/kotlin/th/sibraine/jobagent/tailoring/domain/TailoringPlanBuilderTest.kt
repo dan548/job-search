@@ -30,6 +30,7 @@ class TailoringPlanBuilderTest {
         )
 
         assertEquals(4, result.questions.size)
+        assertEquals(4, result.gapGroups.size)
         val jvm = result.questions.single { it.requirement == "Java, Kotlin и экосистема JVM" }
         assertEquals(TailoringQuestionKind.EVIDENCE, jvm.kind)
         assertEquals(3, jvm.relatedRequirements.size)
@@ -39,6 +40,10 @@ class TailoringPlanBuilderTest {
         assertEquals(listOf("Remote", "Contractor"), workFormat.relatedRequirements)
 
         assertTrue(result.questions.any { it.requirement == "SQL и базы данных" })
+        assertEquals(
+            listOf("Remote", "Contractor"),
+            result.gapGroups.single { it.title == "Формат работы" }.requirements,
+        )
     }
 
     @Test
@@ -49,6 +54,20 @@ class TailoringPlanBuilderTest {
         )
 
         assertEquals(listOf("Security clearance"), result.questions.map { it.requirement })
+    }
+
+    @Test
+    fun `group exposes the strongest status and importance without losing requirements`() {
+        val result = build(
+            row("Kotlin/JVM", RequirementImportance.SOFT_REQUIREMENT, RequirementStatus.UNASSESSED),
+            row("JVM debugging", RequirementImportance.HARD_REQUIREMENT, RequirementStatus.MISSING),
+            row("Gradle", RequirementImportance.SOFT_REQUIREMENT, RequirementStatus.BLOCKED),
+        )
+
+        val group = result.gapGroups.single()
+        assertEquals(RequirementStatus.BLOCKED, group.status)
+        assertEquals(RequirementImportance.HARD_REQUIREMENT, group.importance)
+        assertEquals(3, group.requirements.size)
     }
 
     @Test

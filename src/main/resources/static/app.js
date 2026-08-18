@@ -381,13 +381,15 @@ function renderVariant() {
   download.href = `/api/v1/resume-variants/${state.variant.variantId}/pdf`;
   download.classList.remove("hidden");
   const plan = state.variant.plan;
-  details.innerHTML = `<div class="variant-stats"><span><b>${plan.skillElementIds?.length || 0}</b> навыков выбрано</span><span><b>${plan.gaps?.length || 0}</b> пробелов отмечено</span><span><b>${plan.questions?.length || 0}</b> приоритетных тем</span><span><b>${state.variant.diff?.length || 0}</b> изменений</span></div>
+  const gapGroups = plan.gapGroups?.length ? plan.gapGroups : (plan.gaps || []).map((gap, index) => ({ groupId: `legacy-${index}`, title: gap.requirement, importance: gap.importance, status: gap.status, kind: "EVIDENCE", requirements: [gap.requirement] }));
+  const gapRequirementCount = plan.gaps?.length || 0;
+  details.innerHTML = `<div class="variant-stats"><span><b>${plan.skillElementIds?.length || 0}</b> навыков выбрано</span><span><b>${gapGroups.length}</b> тем с пробелами<small>${gapGroups.length !== gapRequirementCount ? ` · ${gapRequirementCount} требований` : ""}</small></span><span><b>${plan.questions?.length || 0}</b> тем для уточнения</span><span><b>${state.variant.diff?.length || 0}</b> изменений</span></div>
     <div class="variant-review-grid">
       <section><div class="subsection-title"><h3>Итоговое резюме</h3><small>Полный текст версии</small></div><div class="resume-preview">${resumePreviewMarkup(state.variant.resume)}</div></section>
       <section><div class="subsection-title"><h3>Что изменилось</h3><small>Полный diff относительно выбранного подтверждённого содержания</small></div><div class="diff-list">${variantDiffMarkup(state.variant.diff)}</div></section>
     </div>
     <div class="variant-risks">
-      <section><h3>Пробелы</h3><p class="risk-explanation">Это требования вакансии, для которых в подтверждённом профиле пока недостаточно сведений. Они не исправляются автоматически.</p>${(plan.gaps || []).map((gap) => `<div class="risk-item"><b>${escapeHtml(gap.requirement)}</b><span class="status-${gap.status}">${escapeHtml(requirementStatusLabel(gap.status))} · ${escapeHtml(requirementImportanceLabel(gap.importance))}</span></div>`).join("") || '<div class="empty-state compact">Критичных пробелов не найдено.</div>'}</section>
+      <section><h3>Пробелы по темам</h3><p class="risk-explanation">Близкие требования объединены. Раскройте тему, чтобы увидеть исходные формулировки вакансии.</p>${gapGroups.map(tailoringGapGroupMarkup).join("") || '<div class="empty-state compact">Критичных пробелов не найдено.</div>'}</section>
       <section><h3>Что можно уточнить</h3><p class="risk-explanation">Близкие требования объединены по темам. Для опыта добавляйте только подтверждаемые факты; предпочтения меняются в настройках отклика.</p>${(plan.questions || []).map(tailoringQuestionMarkup).join("") || '<div class="empty-state compact">Дополнительных вопросов нет.</div>'}</section>
     </div>
     <div class="variant-approval ${state.variant.reviewedAt ? "approved" : ""}">${state.variant.reviewedAt ? `<div><b>Версия подтверждена</b><small>${escapeHtml(new Date(state.variant.reviewedAt).toLocaleString("ru-RU"))}</small></div>` : '<label class="checkbox-line"><input id="variant-review-check" type="checkbox"><span>Я проверил итоговый текст и принимаю показанные AI-переформулировки</span></label><button id="approve-variant" class="button primary" type="button" disabled>Подтвердить версию</button>'}</div>
@@ -410,6 +412,13 @@ function requirementStatusLabel(status) {
 
 function requirementImportanceLabel(importance) {
   return ({ HARD_REQUIREMENT: "обязательное требование", SOFT_REQUIREMENT: "желательное требование", NICE_TO_HAVE: "будет преимуществом" })[importance] || importance;
+}
+
+function tailoringGapGroupMarkup(group) {
+  const requirements = group.requirements || [];
+  const details = requirements.length > 1 ? `<details class="question-requirements"><summary>Исходные требования (${requirements.length})</summary><ul>${requirements.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></details>` : "";
+  const action = group.kind === "PREFERENCE" ? '<small class="risk-group-action">Проверяется в настройках отклика</small>' : "";
+  return `<article class="risk-group"><div><b>${escapeHtml(group.title)}</b><span class="status-${group.status}">${escapeHtml(requirementStatusLabel(group.status))} · ${escapeHtml(requirementImportanceLabel(group.importance))}</span></div>${action}${details}</article>`;
 }
 
 function tailoringQuestionMarkup(question) {

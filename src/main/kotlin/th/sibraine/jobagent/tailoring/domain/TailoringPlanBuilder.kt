@@ -26,13 +26,15 @@ class TailoringPlanBuilder {
     ): TailoringPlan {
         val evidence = EvidenceIndex(confirmed, profile)
         val gaps = gaps(match)
+        val gapGroups = gapGroups(gaps)
         return plan.copy(
             summary = plan.summary?.resolve(evidence),
             experiences = plan.experiences.map { it.copy(achievements = it.achievements.map { a -> a.resolve(evidence) }) },
             projects = plan.projects.map { it.copy(achievements = it.achievements.map { a -> a.resolve(evidence) }) },
             omissions = omissions(base, tailored),
             gaps = gaps,
-            questions = questions(gaps),
+            gapGroups = gapGroups,
+            questions = questions(gapGroups),
         )
     }
 
@@ -60,27 +62,42 @@ class TailoringPlanBuilder {
         .filter { it.status != RequirementStatus.MATCHED }
         .map { TailoringGap(it.requirement, it.importance, it.status) }
 
-    private fun questions(gaps: List<TailoringGap>): List<TailoringQuestion> {
-        val grouped = gaps
+    private fun gapGroups(gaps: List<TailoringGap>): List<TailoringGapGroup> = gaps
+        .groupBy { theme(it.requirement) }
+        .map { (theme, relatedGaps) ->
+            TailoringGapGroup(
+                groupId = theme.key,
+                title = theme.title,
+                importance = relatedGaps.minBy { importanceRank(it.importance) }.importance,
+                status = relatedGaps.minBy { statusRank(it.status) }.status,
+                kind = theme.kind,
+                requirements = relatedGaps.map { it.requirement }.distinct(),
+            )
+        }
+        .sortedWith(
+            compareBy<TailoringGapGroup> { statusRank(it.status) }
+                .thenBy { importanceRank(it.importance) }
+                .thenBy { it.title.lowercase() },
+        )
+
+    private fun questions(gapGroups: List<TailoringGapGroup>): List<TailoringQuestion> {
+        val grouped = gapGroups
             .filter { it.importance == RequirementImportance.HARD_REQUIREMENT || it.status == RequirementStatus.BLOCKED }
-            .groupBy { theme(it.requirement) }
-            .map { (theme, relatedGaps) ->
-                val mostImportant = relatedGaps.minBy { importanceRank(it.importance) }
-                val blocked = relatedGaps.any { it.status == RequirementStatus.BLOCKED }
+            .map { group ->
                 TailoringQuestion(
-                    questionId = questionId(theme.key),
+                    questionId = questionId(group.groupId),
                     question = when {
-                        theme.kind == TailoringQuestionKind.PREFERENCE ->
+                        group.kind == TailoringQuestionKind.PREFERENCE ->
                             "Проверьте настройки отклика: подходит ли вам это условие вакансии?"
-                        blocked ->
+                        group.status == RequirementStatus.BLOCKED ->
                             "Это условие может блокировать отклик. Есть ли подтверждаемый факт, который меняет оценку?"
                         else ->
                             "Есть ли у вас конкретный подтверждаемый опыт по этой теме?"
                     },
-                    requirement = theme.title,
-                    importance = mostImportant.importance,
-                    kind = theme.kind,
-                    relatedRequirements = relatedGaps.map { it.requirement }.distinct(),
+                    requirement = group.title,
+                    importance = group.importance,
+                    kind = group.kind,
+                    relatedRequirements = group.requirements,
                 )
             }
 
@@ -129,6 +146,13 @@ class TailoringPlanBuilder {
         RequirementImportance.HARD_REQUIREMENT -> 0
         RequirementImportance.SOFT_REQUIREMENT -> 1
         RequirementImportance.NICE_TO_HAVE -> 2
+    }
+
+    private fun statusRank(status: RequirementStatus) = when (status) {
+        RequirementStatus.BLOCKED -> 0
+        RequirementStatus.MISSING -> 1
+        RequirementStatus.UNASSESSED -> 2
+        RequirementStatus.MATCHED -> 3
     }
 
     private fun questionId(requirement: String): String {

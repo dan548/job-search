@@ -207,6 +207,11 @@ input:focus, textarea:focus, select:focus { border-color: var(--green); box-shad
 .risk-item { display: flex; justify-content: space-between; gap: 16px; border-top: 1px solid var(--line); padding: 10px 0; font-size: 12px; }
 .risk-item:first-of-type { border-top: 0; padding-top: 0; }
 .risk-item span, .risk-item small { color: var(--muted); text-align: right; }
+.risk-group { border-top: 1px solid var(--line); display: grid; gap: 7px; padding: 12px 0; font-size: 12px; }
+.risk-group > div { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+.risk-group > div span { color: var(--muted); text-align: right; }
+.risk-group-action { color: var(--muted); }
+.variant-stats span small { display: block; margin-top: 2px; color: var(--muted); font-size: 10px; font-weight: 500; }
 .gap-answer { border-top: 1px solid var(--line); display: grid; gap: 8px; padding: 13px 0; }
 .gap-answer > b,.gap-answer > small { display: block; }
 .gap-answer > small { color: var(--muted); }

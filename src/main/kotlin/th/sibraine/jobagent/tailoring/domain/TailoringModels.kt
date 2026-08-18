@@ -47,6 +47,7 @@ data class TailoringPlan(
     val rationale: String = "",
     val omissions: List<TailoringOmission> = emptyList(),
     val gaps: List<TailoringGap> = emptyList(),
+    val gapGroups: List<TailoringGapGroup> = emptyList(),
     val questions: List<TailoringQuestion> = emptyList(),
 )
 
@@ -66,6 +67,15 @@ data class TailoringGap(
 )
 
 enum class TailoringQuestionKind { EVIDENCE, PREFERENCE }
+
+data class TailoringGapGroup(
+    val groupId: String,
+    val title: String,
+    val importance: RequirementImportance,
+    val status: RequirementStatus,
+    val kind: TailoringQuestionKind = TailoringQuestionKind.EVIDENCE,
+    val requirements: List<String> = emptyList(),
+)
 
 data class TailoringQuestion(
     val questionId: String,
