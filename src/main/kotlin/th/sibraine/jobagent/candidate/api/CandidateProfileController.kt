@@ -31,6 +31,7 @@ data class CandidateFactRequest(
     @field:NotBlank val text: String,
     val verified: Boolean,
 )
+data class SaveCandidateFactRequest(val type: FactType = FactType.OTHER, @field:NotBlank val text: String)
 
 data class CreateIdentityRequest(@field:NotBlank val label: String, @field:NotBlank val displayName: String)
 data class UpdateProfileBasicsRequest(
@@ -79,6 +80,11 @@ class CandidateProfileController(
     )
 
     @GetMapping fun get(): CandidateProfile = service.get()
+
+    @PostMapping("/facts")
+    @ResponseStatus(HttpStatus.CREATED)
+    fun addFact(@Valid @RequestBody request: SaveCandidateFactRequest): CandidateProfile =
+        service.addConfirmedFact(request.type, request.text)
 
     @PutMapping("/details")
     fun updateDetails(@Valid @RequestBody request: UpdateProfileBasicsRequest): CandidateProfile {

@@ -65,11 +65,15 @@ data class TailoringGap(
     val status: RequirementStatus,
 )
 
+enum class TailoringQuestionKind { EVIDENCE, PREFERENCE }
+
 data class TailoringQuestion(
     val questionId: String,
     val question: String,
     val requirement: String,
     val importance: RequirementImportance,
+    val kind: TailoringQuestionKind = TailoringQuestionKind.EVIDENCE,
+    val relatedRequirements: List<String> = emptyList(),
 )
 
 data class TailoringRequest(

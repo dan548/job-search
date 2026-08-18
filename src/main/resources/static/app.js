@@ -254,6 +254,22 @@ function renderVacancies() {
   list.querySelectorAll("[data-delete-vacancy-id]").forEach((button) => button.addEventListener("click", () => deleteVacancy(button.dataset.deleteVacancyId)));
 }
 
+function fillVacancyForm(vacancy) {
+  const form = $("#vacancy-form");
+  const values = vacancy || {};
+  form.elements.company.value = values.company || "";
+  form.elements.title.value = values.title || "";
+  form.elements.location.value = values.location || "";
+  form.elements.url.value = values.url || "";
+  form.elements.description.value = values.description || "";
+  form.dataset.sourceVacancyId = vacancy?.id || "";
+  $("#vacancy-form-title").textContent = vacancy ? "Данные выбранной вакансии" : "Новая вакансия";
+  $("#clear-vacancy-form").classList.toggle("hidden", !vacancy);
+  const submit = form.querySelector("button[type=submit]");
+  submit.textContent = vacancy ? "Сохранить как новую и проанализировать" : "Сохранить и проанализировать";
+  submit.dataset.label = submit.textContent;
+}
+
 function recommendationLabel(value) {
   return ({ PRIORITY: "Приоритетный отклик", APPLY: "Стоит откликнуться", MAYBE: "Нужна оценка", REJECT: "Лучше пропустить" })[value] || value;
 }
@@ -302,12 +318,19 @@ function renderAnalysis() {
   if (!state.analysis) { panel.classList.add("hidden"); renderVariant(); return; }
   const match = state.analysis.match;
   const matrix = match.requirementEvidenceMatrix || [];
+  const matched = matrix.filter((row) => row.status === "MATCHED").length;
+  const missing = matrix.filter((row) => row.status === "MISSING" || row.status === "BLOCKED").length;
+  const unassessed = matrix.filter((row) => row.status === "UNASSESSED").length;
+  const matrixRow = (row) => `<div class="matrix-row"><span>${escapeHtml(row.requirement)}</span><b class="status-${row.status}">${escapeHtml(requirementStatusLabel(row.status))}</b></div>`;
+  const visibleRows = matrix.slice(0, 12);
+  const remainingRows = matrix.slice(12);
   panel.innerHTML = `<div class="analysis-top">
     <div class="score"><b>${match.score}</b><small>из 100</small></div>
     <div><p class="eyebrow">${escapeHtml(state.analysis.analysis.role || state.vacancy.title)}</p><div class="recommendation">${escapeHtml(recommendationLabel(match.recommendation))}</div><p class="analysis-copy">${escapeHtml(match.reasoningSummary)}</p></div>
     <button id="reanalyze" class="button secondary" type="button">Обновить анализ</button>
   </div>
-  <div class="matrix">${matrix.slice(0, 12).map((row) => `<div class="matrix-row"><span>${escapeHtml(row.requirement)}</span><b class="status-${row.status}">${escapeHtml(row.status)}</b></div>`).join("")}</div>`;
+  <div class="analysis-summary"><span>${escapeHtml(countLabel(matched, ["требование подтверждено", "требования подтверждены", "требований подтверждено"]))}</span><span class="${missing ? "summary-danger" : ""}">${escapeHtml(countLabel(missing, ["требование не подтверждено", "требования не подтверждены", "требований не подтверждено"]))}</span><span>${escapeHtml(countLabel(unassessed, ["требование не оценено", "требования не оценены", "требований не оценено"]))}</span></div>
+  <div class="matrix">${visibleRows.map(matrixRow).join("")}</div>${remainingRows.length ? `<details class="matrix-more"><summary>Показать остальные требования (${remainingRows.length})</summary><div class="matrix">${remainingRows.map(matrixRow).join("")}</div></details>` : ""}`;
   panel.classList.remove("hidden");
   $("#reanalyze").addEventListener("click", analyzeSelectedVacancy);
   $("#create-variant").disabled = false;
@@ -353,14 +376,14 @@ function renderVariant() {
   download.href = `/api/v1/resume-variants/${state.variant.variantId}/pdf`;
   download.classList.remove("hidden");
   const plan = state.variant.plan;
-  details.innerHTML = `<div class="variant-stats"><span><b>${plan.skillElementIds?.length || 0}</b> навыков выбрано</span><span><b>${plan.gaps?.length || 0}</b> пробелов отмечено</span><span><b>${plan.questions?.length || 0}</b> вопросов к вам</span><span><b>${state.variant.diff?.length || 0}</b> изменений</span></div>
+  details.innerHTML = `<div class="variant-stats"><span><b>${plan.skillElementIds?.length || 0}</b> навыков выбрано</span><span><b>${plan.gaps?.length || 0}</b> пробелов отмечено</span><span><b>${plan.questions?.length || 0}</b> приоритетных тем</span><span><b>${state.variant.diff?.length || 0}</b> изменений</span></div>
     <div class="variant-review-grid">
       <section><div class="subsection-title"><h3>Итоговое резюме</h3><small>Полный текст версии</small></div><div class="resume-preview">${resumePreviewMarkup(state.variant.resume)}</div></section>
       <section><div class="subsection-title"><h3>Что изменилось</h3><small>Полный diff относительно выбранного подтверждённого содержания</small></div><div class="diff-list">${variantDiffMarkup(state.variant.diff)}</div></section>
     </div>
     <div class="variant-risks">
-      <section><h3>Пробелы</h3>${(plan.gaps || []).map((gap) => `<div class="risk-item"><b>${escapeHtml(gap.requirement)}</b><span class="status-${gap.status}">${escapeHtml(gap.status)} · ${escapeHtml(gap.importance)}</span></div>`).join("") || '<div class="empty-state compact">Критичных пробелов не найдено.</div>'}</section>
-      <section><h3>Вопросы к вам</h3>${(plan.questions || []).map((question) => `<div class="risk-item"><b>${escapeHtml(question.question)}</b><small>${escapeHtml(question.requirement)}</small></div>`).join("") || '<div class="empty-state compact">Дополнительных вопросов нет.</div>'}</section>
+      <section><h3>Пробелы</h3><p class="risk-explanation">Это требования вакансии, для которых в подтверждённом профиле пока недостаточно сведений. Они не исправляются автоматически.</p>${(plan.gaps || []).map((gap) => `<div class="risk-item"><b>${escapeHtml(gap.requirement)}</b><span class="status-${gap.status}">${escapeHtml(requirementStatusLabel(gap.status))} · ${escapeHtml(requirementImportanceLabel(gap.importance))}</span></div>`).join("") || '<div class="empty-state compact">Критичных пробелов не найдено.</div>'}</section>
+      <section><h3>Что можно уточнить</h3><p class="risk-explanation">Близкие требования объединены по темам. Для опыта добавляйте только подтверждаемые факты; предпочтения меняются в настройках отклика.</p>${(plan.questions || []).map(tailoringQuestionMarkup).join("") || '<div class="empty-state compact">Дополнительных вопросов нет.</div>'}</section>
     </div>
     <div class="variant-approval ${state.variant.reviewedAt ? "approved" : ""}">${state.variant.reviewedAt ? `<div><b>Версия подтверждена</b><small>${escapeHtml(new Date(state.variant.reviewedAt).toLocaleString("ru-RU"))}</small></div>` : '<label class="checkbox-line"><input id="variant-review-check" type="checkbox"><span>Я проверил итоговый текст и принимаю показанные AI-переформулировки</span></label><button id="approve-variant" class="button primary" type="button" disabled>Подтвердить версию</button>'}</div>
     ${coverLetterMarkup(state.variant.coverLetter)}`;
@@ -370,9 +393,45 @@ function renderVariant() {
     $("#variant-review-check").addEventListener("change", (event) => $("#approve-variant").disabled = !event.target.checked);
     $("#approve-variant").addEventListener("click", approveVariantReview);
   }
+  details.querySelectorAll("[data-gap-answer]").forEach((form) => form.addEventListener("submit", saveGapFact));
   $("#generate-cover-letter").addEventListener("click", generateCoverLetter);
   $("#copy-cover-letter")?.addEventListener("click", copyCoverLetter);
   renderResumeSelection();
+}
+
+function requirementStatusLabel(status) {
+  return ({ MATCHED: "Подтверждено", MISSING: "Не подтверждено", BLOCKED: "Блокирует отклик", UNASSESSED: "Недостаточно данных" })[status] || status;
+}
+
+function requirementImportanceLabel(importance) {
+  return ({ HARD_REQUIREMENT: "обязательное требование", SOFT_REQUIREMENT: "желательное требование", NICE_TO_HAVE: "будет преимуществом" })[importance] || importance;
+}
+
+function tailoringQuestionMarkup(question) {
+  const related = question.relatedRequirements || [];
+  const details = related.length > 1 ? `<details class="question-requirements"><summary>Какие требования объединены (${related.length})</summary><ul>${related.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></details>` : "";
+  if (question.kind === "PREFERENCE") {
+    return `<article class="gap-answer preference-question"><b>${escapeHtml(question.requirement)}</b><small>${escapeHtml(requirementImportanceLabel(question.importance))}</small><p>${escapeHtml(question.question)}</p>${details}<a class="button secondary" href="#application-settings-form">Проверить настройки отклика</a></article>`;
+  }
+  return `<form class="gap-answer" data-gap-answer="${escapeHtml(question.questionId)}"><b>${escapeHtml(question.requirement)}</b><small>${escapeHtml(requirementImportanceLabel(question.importance))}</small><p>${escapeHtml(question.question)}</p>${details}<textarea name="text" rows="3" maxlength="4000" required placeholder="Например: проект, период, ваша роль, технология и измеримый результат"></textarea><div><select name="type" aria-label="Тип факта"><option value="EXPERIENCE">Опыт</option><option value="SKILL">Навык</option><option value="PROJECT">Проект</option><option value="EDUCATION">Образование</option><option value="CERTIFICATION">Сертификация</option><option value="OTHER">Другое</option></select><button class="button secondary" type="submit">Добавить факт и обновить анализ</button></div></form>`;
+}
+
+async function saveGapFact(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector("button[type=submit]");
+  const values = Object.fromEntries(new FormData(form));
+  busy(button, true, "Сохраняем…");
+  try {
+    state.profile = await request("/api/v1/candidate-profile/facts", {
+      method: "POST",
+      body: { type: values.type, text: values.text.trim() },
+    });
+    renderProfile();
+    await analyzeSelectedVacancy();
+    toast("Факт сохранён в профиле, анализ обновлён — создайте новую версию резюме");
+  } catch (error) { toast(error.message, true); }
+  finally { busy(button, false); }
 }
 
 async function generateCoverLetter() {
@@ -482,6 +541,45 @@ function statusLabel(status) {
   return ({ DRAFT: "Черновик", FILLING: "Заполнение", NEEDS_INPUT: "Нужны ответы", READY_TO_SUBMIT: "Готов к отправке", SUBMITTED: "Отправлен", FAILED: "Ошибка" })[status] || status;
 }
 
+function observedField(fieldKey) {
+  return state.draft?.draft?.observedFields?.find((field) => field.fieldKey === fieldKey);
+}
+
+function fieldDisplayName(fieldKey, fallback = "Поле формы") {
+  const field = observedField(fieldKey);
+  return field?.label && field.label !== field.fieldKey ? field.label : fallback;
+}
+
+function questionReasonLabel(reason) {
+  return ({
+    NO_EXPLICIT_ANSWER: "Нужен ваш ответ",
+    SENSITIVE_TOPIC: "Ответ можно использовать только с вашего явного согласия",
+    UNKNOWN_FIELD: "Система не может безопасно подобрать ответ",
+    OPTION_MISMATCH: "Сохранённый ответ не совпадает с вариантами формы",
+    VALUE_TOO_LONG: "Ответ превышает ограничение формы",
+    MISSING_ARTIFACT: "Нужно выбрать файл",
+  })[reason] || "Нужен ваш ответ";
+}
+
+function approvalControlMarkup(approval) {
+  const field = observedField(approval.fieldKey) || {};
+  const options = approval.options || field.options || [];
+  if (options.length) {
+    return `<select data-value-for="${approval.approvalId}"><option value="">Выберите ответ</option>${options.map((option) => `<option value="${escapeHtml(option)}">${escapeHtml(option)}</option>`).join("")}</select>`;
+  }
+  if (field.type === "CHECKBOX") {
+    return `<select data-value-for="${approval.approvalId}"><option value="">Выберите ответ</option><option value="true">Да, подтверждаю</option><option value="false">Нет</option></select>`;
+  }
+  if (field.type === "FILE") {
+    return '<div class="approval-control-note">Этот вопрос требует отдельного файла. Добавьте его в форме браузера.</div>';
+  }
+  if (field.type === "TEXTAREA") {
+    return `<textarea data-value-for="${approval.approvalId}" rows="4" placeholder="Ваш ответ"></textarea>`;
+  }
+  const type = ({ EMAIL: "email", PHONE: "tel", NUMBER: "number", DATE: "date", URL: "url" })[field.type] || "text";
+  return `<input data-value-for="${approval.approvalId}" type="${type}" placeholder="Ваш ответ">`;
+}
+
 function renderDraft() {
   const panel = $("#application-status");
   const approvals = $("#approval-list");
@@ -497,17 +595,17 @@ function renderDraft() {
   }
   const draft = state.draft.draft;
   panel.className = "empty-state";
-  panel.innerHTML = `<strong>${escapeHtml(statusLabel(draft.status))}</strong><br><span>${draft.answers?.length || 0} полей подготовлено · ${state.draft.artifacts?.length || 0} вложений</span>${draft.submission ? `<div class="submission-result"><b>${escapeHtml(draft.submission.mode === "MANUAL" ? "Отправлено вручную" : "Отправлено через browser runner")}</b><span>${escapeHtml(new Date(draft.submission.submittedAt).toLocaleString("ru-RU"))}</span>${draft.submission.reference ? `<span>Reference: ${escapeHtml(draft.submission.reference)}</span>` : ""}${draft.submission.note ? `<small>${escapeHtml(draft.submission.note)}</small>` : ""}</div>` : ""}`;
+  panel.innerHTML = `<strong>${escapeHtml(statusLabel(draft.status))}</strong><br><span>${draft.answers?.length || 0} полей подготовлено · ${state.draft.artifacts?.length || 0} вложений</span>${draft.submission ? `<div class="submission-result"><b>${escapeHtml(draft.submission.mode === "MANUAL" ? "Отправлено вручную" : "Отправлено управляемым браузером")}</b><span>${escapeHtml(new Date(draft.submission.submittedAt).toLocaleString("ru-RU"))}</span>${draft.submission.reference ? `<span>Подтверждение: ${escapeHtml(draft.submission.reference)}</span>` : ""}${draft.submission.note ? `<small>${escapeHtml(draft.submission.note)}</small>` : ""}</div>` : ""}`;
   $("#start-browser").classList.toggle("hidden", draft.status === "SUBMITTED" || draft.status === "FAILED");
   $("#record-manual-submission").classList.toggle("hidden", draft.status !== "READY_TO_SUBMIT");
   renderSubmitReview();
   const pending = state.draft.pendingApprovals || [];
-  approvals.innerHTML = pending.map((approval) => {
+  const orderedPending = [...pending].sort((left, right) => Number(right.required) - Number(left.required));
+  approvals.innerHTML = orderedPending.map((approval) => {
     if (approval.type === "SUBMIT") return `<div class="approval"><div><p>${escapeHtml(approval.question)}</p><small>Будет отправлено только текущее подтверждённое состояние.</small></div><button class="button primary" data-submit-approval="${approval.approvalId}">Подтвердить и отправить</button></div>`;
-    const control = approval.options?.length
-      ? `<select data-value-for="${approval.approvalId}"><option value="">Выберите ответ</option>${approval.options.map((option) => `<option>${escapeHtml(option)}</option>`).join("")}</select>`
-      : `<input data-value-for="${approval.approvalId}" placeholder="Ваш ответ">`;
-    return `<div class="approval"><div><p>${escapeHtml(approval.question)}</p><small>${escapeHtml(approval.reason || "Требуется ответ")}${approval.required ? " · обязательный" : ""}</small></div><div class="approval-controls">${control}<label class="remember-answer"><input type="checkbox" data-save-for="${approval.approvalId}"><span>Запомнить для следующих откликов</span></label><button class="button primary" data-answer-approval="${approval.approvalId}">Сохранить</button></div></div>`;
+    const control = approvalControlMarkup(approval);
+    const technicalKey = observedField(approval.fieldKey)?.label === approval.fieldKey ? `<small class="technical-field-key">${escapeHtml(approval.fieldKey)}</small>` : "";
+    return `<div class="approval ${approval.required ? "approval-required" : ""}"><div><div class="approval-heading"><p>${escapeHtml(approval.question)}</p>${approval.required ? '<span class="pill orange">Обязательный вопрос</span>' : '<span class="pill muted">Необязательно</span>'}</div><small>${escapeHtml(questionReasonLabel(approval.reason))}</small>${technicalKey}</div><div class="approval-controls">${control}<label class="remember-answer"><input type="checkbox" data-save-for="${approval.approvalId}"><span>Запомнить для следующих откликов</span></label><button class="button primary" data-answer-approval="${approval.approvalId}"${observedField(approval.fieldKey)?.type === "FILE" ? " disabled" : ""}>Сохранить ответ</button></div></div>`;
   }).join("");
   if (draft.status === "READY_TO_SUBMIT" && !pending.some((item) => item.type === "SUBMIT")) {
     approvals.insertAdjacentHTML("beforeend", '<div class="approval"><div><p>Всё готово к финальной проверке</p><small>Сначала создайте отдельное подтверждение отправки.</small></div><button id="request-submit" class="button secondary">Проверить перед отправкой</button></div>');
@@ -520,6 +618,39 @@ function renderDraft() {
 
 function answerSourceLabel(source) {
   return ({ RESUME: "подтверждённое резюме", PROFILE: "профиль", SETTINGS: "настройки", CATALOG: "каталог ответов", USER: "ваш ответ", DECLINED_BY_USER: "вы отказались отвечать", ARTIFACT: "вложение" })[source] || source || "нет источника";
+}
+
+function artifactTypeLabel(type) {
+  return ({ RESUME_PDF: "Подготовленное резюме", COVER_LETTER: "Сопроводительное письмо", SCREENSHOT: "Снимок формы", SUBMISSION_RECEIPT: "Подтверждение отправки" })[type] || "Вложение";
+}
+
+function browserValidationMessage(error) {
+  return ({
+    VALUE_MISSING: "Заполните обязательное поле",
+    TYPE_MISMATCH: "Проверьте формат значения",
+    PATTERN_MISMATCH: "Значение не соответствует формату формы",
+    TOO_LONG: "Сократите значение",
+    TOO_SHORT: "Добавьте недостающие данные",
+    RANGE_UNDERFLOW: "Значение меньше разрешённого",
+    RANGE_OVERFLOW: "Значение больше разрешённого",
+    STEP_MISMATCH: "Выберите допустимое значение",
+    BAD_INPUT: "Форма не может прочитать значение",
+  })[error.code] || "Проверьте значение в форме браузера";
+}
+
+function safeDisplayUrl(value) {
+  if (!value) return "Не указан";
+  try {
+    const url = new URL(value);
+    return `${url.origin}${url.pathname}`;
+  } catch (_) { return "Некорректный URL"; }
+}
+
+function countLabel(count, forms) {
+  const mod10 = count % 10;
+  const mod100 = count % 100;
+  const form = mod10 === 1 && mod100 !== 11 ? forms[0] : mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14) ? forms[1] : forms[2];
+  return `${count} ${form}`;
 }
 
 function renderSubmitReview() {
@@ -536,31 +667,68 @@ function renderSubmitReview() {
   const pending = (state.draft.pendingApprovals || []).filter((approval) => approval.type === "ANSWER");
   const validation = state.browserSession?.validationErrors || [];
   const formUrl = draft.formUrl || state.browserSession?.formUrl || $("#application-url").value.trim();
+  const blockingPending = pending.filter((approval) => approval.required);
+  const optionalPending = pending.filter((approval) => !approval.required);
+  const answeredCount = rows.filter(({ answer }) => answer?.value != null).length;
+  const requiredRows = rows.filter(({ field }) => field.required);
+  const unresolvedAnswerKeys = new Set([
+    ...missing.map(({ field }) => field.fieldKey),
+    ...blockingPending.map((approval) => approval.fieldKey),
+  ]);
+  const blockingKeys = new Set([
+    ...unresolvedAnswerKeys,
+    ...validation.map((error) => error.fieldKey || `form:${error.code}`),
+    ...(!formUrl ? ["form-url"] : []),
+  ]);
+  const validationOnly = validation.filter((error) => !error.fieldKey || !unresolvedAnswerKeys.has(error.fieldKey));
   const warnings = [
     !formUrl ? "Не сохранён URL формы" : null,
     missing.length ? `${missing.length} обязательных полей без значения` : null,
-    pending.length ? `${pending.length} вопросов ожидают ответа` : null,
-    validation.length ? `${validation.length} ошибок browser-валидации не устранено` : null,
+    validationOnly.length ? `${validationOnly.length} заполненных полей не прошли проверку формы` : null,
+    optionalPending.length ? `${optionalPending.length} необязательных вопросов оставлены без ответа` : null,
     declined.length ? `${declined.length} полей сознательно пропущено` : null,
     !(state.draft.artifacts || []).length ? "Нет вложений" : null,
   ].filter(Boolean);
-  panel.innerHTML = `<div class="submit-review-heading"><div><p class="eyebrow">Финальная проверка</p><h3>Что будет отправлено</h3></div><span class="pill ${warnings.length ? "orange" : ""}">${warnings.length ? `${warnings.length} предупреждений` : "Без предупреждений"}</span></div>
-    <div class="submit-review-url"><span>URL формы</span><strong>${escapeHtml(formUrl || "Не указан")}</strong></div>
-    <div class="submit-review-fields"><h4>Все поля и источники</h4>${rows.map(({ field, answer }) => `<div class="submit-field ${!answer?.value ? "missing" : ""}"><div><b>${escapeHtml(field.label || field.fieldKey)}</b><small>${escapeHtml(field.fieldKey)}${field.required ? " · обязательное" : ""}</small></div><p>${answer?.value != null ? escapeHtml(answer.value) : "— пропущено —"}</p><span>${escapeHtml(answerSourceLabel(answer?.source))}</span></div>`).join("") || '<div class="empty-state compact">Поля формы ещё не были просканированы.</div>'}</div>
-    <div class="submit-review-bottom"><section><h4>Вложения</h4>${(state.draft.artifacts || []).map((artifact) => `<a class="artifact-row" href="/api/v1/application-drafts/${draft.draftId}/artifacts/${artifact.artifactId}"><b>${escapeHtml(artifact.fileName)}</b><span>${escapeHtml(artifact.type)} · ${Math.ceil(artifact.byteSize / 1024)} КБ</span><small>SHA-256 ${escapeHtml(artifact.sha256.slice(0, 12))}…</small></a>`).join("") || '<div class="empty-state compact">Вложений нет.</div>'}</section><section><h4>Пропуски и предупреждения</h4>${warnings.map((warning) => `<div class="submit-warning">${escapeHtml(warning)}</div>`).join("") || '<div class="empty-state compact">Критичных предупреждений нет.</div>'}</section></div>`;
+  panel.innerHTML = `<div class="submit-review-heading"><div><p class="eyebrow">Финальная проверка</p><h3>${blockingKeys.size ? "Что нужно исправить перед отправкой" : "Что будет отправлено"}</h3></div><span class="pill ${blockingKeys.size ? "orange" : ""}">${blockingKeys.size ? escapeHtml(countLabel(blockingKeys.size, ["блокирующий пункт", "блокирующих пункта", "блокирующих пунктов"])) : warnings.length ? escapeHtml(countLabel(warnings.length, ["замечание", "замечания", "замечаний"])) : "Без предупреждений"}</span></div>
+    <div class="review-progress-summary"><span><b>${answeredCount}/${rows.length}</b> полей подготовлено</span><span><b>${requiredRows.length - missing.length}/${requiredRows.length}</b> обязательных заполнено</span><span class="${blockingKeys.size ? "summary-danger" : "summary-ready"}"><b>${blockingKeys.size}</b> требуют действия</span></div>
+    <div class="submit-review-url"><span>Форма отклика · параметры ссылки скрыты</span><strong>${escapeHtml(safeDisplayUrl(formUrl))}</strong></div>
+    <p class="privacy-note">На этом экране значения показаны для вашей проверки. В техническом журнале вместо них сохраняется только отметка о выполненном действии.</p>
+    <div class="submit-review-fields"><h4>Все поля и источники</h4>${rows.map(({ field, answer }) => `<div class="submit-field ${field.required && !answer?.value ? "missing" : !answer?.value ? "skipped" : ""}" title="Технический ключ: ${escapeHtml(field.fieldKey)}"><div><b>${escapeHtml(field.label || "Неизвестное поле")}</b>${field.required ? "<small>Обязательное</small>" : ""}</div><p>${answer?.value != null ? escapeHtml(answer.value) : "— пропущено —"}</p><span>${escapeHtml(answerSourceLabel(answer?.source))}</span></div>`).join("") || '<div class="empty-state compact">Поля формы ещё не были просканированы.</div>'}</div>
+    <div class="submit-review-bottom"><section><h4>Вложения</h4>${(state.draft.artifacts || []).map((artifact) => `<a class="artifact-row" href="/api/v1/application-drafts/${draft.draftId}/artifacts/${artifact.artifactId}" title="${escapeHtml(artifact.fileName)}"><b>${escapeHtml(artifactTypeLabel(artifact.type))}</b><span>${Math.ceil(artifact.byteSize / 1024)} КБ</span><small>Контрольная сумма ${escapeHtml(artifact.sha256.slice(0, 12))}…</small></a>`).join("") || '<div class="empty-state compact">Вложений нет.</div>'}</section><section><h4>Пропуски и предупреждения</h4>${warnings.map((warning) => `<div class="submit-warning">${escapeHtml(warning)}</div>`).join("") || '<div class="empty-state compact">Критичных предупреждений нет.</div>'}</section></div>`;
   panel.classList.remove("hidden");
 }
 
 function browserStopCopy(session) {
   const challenges = (session.challenges || []).map((value) => ({ CAPTCHA: "CAPTCHA", OTP: "одноразовый код", REAUTHENTICATION: "повторный вход" })[value] || value).join(", ");
   return {
-    CHALLENGE: { title: `Нужно пройти: ${challenges || "проверку на странице"}`, action: "Завершите действие в открытом окне браузера, затем нажмите «Продолжить и пересканировать»." },
-    VALIDATION_ERRORS: { title: "Форма отклонила часть значений", action: "Исправьте отмеченные поля в окне браузера или ответьте на вопросы ниже, затем повторите сканирование." },
-    PENDING_ANSWERS: { title: "Нужны ваши ответы", action: "Ответьте на вопросы выше. После сохранения продолжите заполнение формы." },
+    CHALLENGE: { title: `Нужно пройти: ${challenges || "проверку на странице"}`, action: "Завершите действие в открытом окне браузера, затем нажмите «Проверить форму ещё раз»." },
+    VALIDATION_ERRORS: { title: "Некоторые заполненные значения не прошли проверку", action: "Исправьте отмеченные поля в окне браузера, затем повторите проверку." },
+    PENDING_ANSWERS: { title: "Нужны ответы на обязательные вопросы", action: "Сохраните ответы в блоке выше. После этого продолжите заполнение формы." },
     RESCAN_LIMIT: { title: "Форма несколько раз изменилась", action: "Проверьте текущий шаг в браузере и запустите ещё одно пересканирование." },
-    RUNNER_ERROR: { title: "Браузерный runner остановился", action: "Проверьте окно браузера и конфигурацию, затем попробуйте продолжить." },
+    RUNNER_ERROR: { title: "Управляемый браузер остановился", action: "Проверьте, что окно браузера открыто, затем попробуйте продолжить." },
     SUBMIT_ERROR: { title: "Не удалось отправить форму", action: "Проверьте ошибки на странице. Повторная отправка потребует актуального подтверждения." }
   }[session.stopReason] || { title: session.status === "ACTIVE" ? "Доступные поля заполнены" : "Сессия приостановлена", action: "Проверьте открытую форму перед следующим действием." };
+}
+
+function browserAuditLabel(event) {
+  return ({
+    RUN_PAUSED: "Заполнение приостановлено", RUN_REPLAYED: "Повторный запуск распознан",
+    RUN_FAILED: "Заполнение завершилось ошибкой", FIELD_PLANNED: "Поле подготовлено",
+    FIELD_APPLIED: "Поле заполнено", FIELD_SKIPPED: "Поле пропущено",
+    VALIDATION_ERROR: "Поле не прошло проверку", FORM_STABLE: "Форма больше не меняется",
+    RESCAN_LIMIT: "Достигнут предел повторных проверок", SUBMIT_CONFIRMED: "Отправка подтверждена",
+    SUBMIT_FAILED: "Не удалось отправить", SUBMIT_REFUSED: "Отправка остановлена безопасно",
+  })[event] || "Техническое событие";
+}
+
+function browserDetailLabel(code) {
+  return ({
+    VALUE_REDACTED: "значение применено и скрыто", NO_APPROVED_ANSWER: "нет подтверждённого ответа",
+    PENDING_ANSWER: "ожидается ответ", PENDING_ANSWERS: "ожидаются обязательные ответы",
+    VALUE_MISSING: "обязательное поле пустое", TYPE_MISMATCH: "неверный формат",
+    OPTION_MISMATCH: "ответ не совпадает с вариантами", VALIDATION_ERRORS: "есть ошибки формы",
+    NO_NEW_FIELDS: "новых полей нет", NO_FIELDS: "полей на текущем шаге нет",
+  })[code] || code?.replaceAll("_", " ").toLowerCase() || "";
 }
 
 function renderBrowserWorkflow() {
@@ -569,7 +737,7 @@ function renderBrowserWorkflow() {
   panel.classList.remove("hidden");
   const session = state.browserSession;
   if (!session) {
-    $("#browser-session-summary").innerHTML = '<div class="empty-state compact">Browser session ещё не запускалась. Укажите HTTPS-ссылку выше и откройте форму.</div>';
+    $("#browser-session-summary").innerHTML = '<div class="empty-state compact">Управляемый браузер ещё не запускался. Укажите HTTPS-ссылку выше и откройте форму.</div>';
     $("#browser-session-actions").innerHTML = "";
     $("#browser-field-progress").innerHTML = "";
     $("#browser-audit").innerHTML = "";
@@ -580,16 +748,22 @@ function renderBrowserWorkflow() {
   const terminal = session.status === "SUBMITTED" || session.status === "CLOSED";
   $("#application-url").value = session.formUrl || $("#application-url").value;
   $("#start-browser").classList.add("hidden");
-  $("#browser-session-summary").innerHTML = `<div class="browser-stop browser-stop-${escapeHtml(session.stopReason || session.status)}"><div><span class="pill ${session.status === "ACTIVE" || session.status === "SUBMITTED" ? "" : "orange"}">${escapeHtml(session.status)}</span><h4>${escapeHtml(copy.title)}</h4><p>${escapeHtml(copy.action)}</p></div><dl><div><dt>Текущая страница</dt><dd>${escapeHtml(session.currentUrl)}</dd></div><div><dt>Продолжений</dt><dd>${session.resumeCount || 0}</dd></div><div><dt>После перезапуска</dt><dd>${session.restorable ? "можно восстановить" : "нужно живое окно"}</dd></div>${session.failureCode ? `<div><dt>Код ошибки</dt><dd>${escapeHtml(session.failureCode)}</dd></div>` : ""}</dl></div>`;
-  $("#browser-session-actions").innerHTML = terminal ? "" : '<button id="resume-browser" class="button primary" type="button">Продолжить и пересканировать</button><small>Повторно читается текущий шаг формы; уже применённые поля не заполняются второй раз.</small>';
-  $("#resume-browser")?.addEventListener("click", resumeBrowserRun);
+  const sessionStatus = ({ ACTIVE: "Форма заполнена", PAUSED: "Нужны действия", SUBMITTED: "Отправлено", CLOSED: "Сессия закрыта" })[session.status] || session.status;
+  const blockingApprovals = (state.draft.pendingApprovals || []).filter((approval) => approval.type === "ANSWER" && approval.required);
   const validation = session.validationErrors || [];
   const fields = session.fieldStates || [];
-  $("#browser-field-progress").innerHTML = `${validation.length ? `<section class="validation-errors"><h4>Ошибки валидации</h4>${validation.map((error) => `<div><b>${escapeHtml(error.fieldKey || "Форма")}</b><span>${escapeHtml(error.message)}</span><code>${escapeHtml(error.code)}</code></div>`).join("")}</section>` : ""}<section class="field-progress"><h4>Поля формы</h4>${fields.map((field) => `<div><span>${escapeHtml(field.fieldKey)}</span><b class="browser-field-${field.status}">${escapeHtml(field.status)}</b>${field.detailCode ? `<small>${escapeHtml(field.detailCode)}</small>` : ""}</div>`).join("") || '<div class="empty-state compact">Поля ещё не обнаружены.</div>'}</section>`;
+  const appliedCount = fields.filter((field) => field.status === "APPLIED").length;
+  const actionKeys = new Set([...blockingApprovals.map((approval) => approval.fieldKey), ...validation.map((error) => error.fieldKey || `form:${error.code}`)]);
+  $("#browser-session-summary").innerHTML = `<div class="browser-progress-summary"><span><b>${appliedCount}/${fields.length}</b> заполнено в браузере</span><span><b>${blockingApprovals.length}</b> обязательных ответов осталось</span><span class="${actionKeys.size ? "summary-danger" : "summary-ready"}"><b>${actionKeys.size}</b> требуют действия</span></div><div class="browser-stop browser-stop-${escapeHtml(session.stopReason || session.status)}"><div><span class="pill ${session.status === "ACTIVE" || session.status === "SUBMITTED" ? "" : "orange"}">${escapeHtml(sessionStatus)}</span><h4>${escapeHtml(copy.title)}</h4><p>${escapeHtml(copy.action)}</p></div><dl><div><dt>Текущая страница</dt><dd>${escapeHtml(safeDisplayUrl(session.currentUrl))}</dd></div><div><dt>Повторных проверок</dt><dd>${session.resumeCount || 0}</dd></div><div><dt>Продолжение</dt><dd>${session.restorable ? "сессия сохранена" : "оставьте окно браузера открытым"}</dd></div>${session.failureCode ? `<div><dt>Причина остановки</dt><dd>${escapeHtml(browserDetailLabel(session.failureCode))}</dd></div>` : ""}</dl></div>`;
+  $("#browser-session-actions").innerHTML = terminal ? "" : `<button id="resume-browser" class="button primary" type="button"${blockingApprovals.length ? " disabled" : ""}>${blockingApprovals.length ? "Сначала ответьте на обязательные вопросы" : "Проверить форму ещё раз"}</button><small>${blockingApprovals.length ? `Осталось обязательных вопросов: ${blockingApprovals.length}. Они находятся выше.` : "Повторно читается текущий шаг формы; уже применённые поля не заполняются второй раз."}</small>`;
+  $("#resume-browser")?.addEventListener("click", resumeBrowserRun);
+  const fieldStatusLabel = (status) => ({ APPLIED: "Заполнено", PENDING_INPUT: "Нужен ответ", VALIDATION_ERROR: "Нужно исправить", SKIPPED: "Пропущено", PLANNED: "Подготовлено", OBSERVED: "Обнаружено" })[status] || status;
+  const orderedFields = [...fields].sort((left, right) => Number(actionKeys.has(right.fieldKey)) - Number(actionKeys.has(left.fieldKey)));
+  $("#browser-field-progress").innerHTML = `${validation.length ? `<section class="validation-errors"><h4>Поля, требующие внимания</h4>${validation.map((error) => `<div title="${escapeHtml(error.code)}"><b>${escapeHtml(fieldDisplayName(error.fieldKey, "Форма"))}</b><span>${escapeHtml(browserValidationMessage(error))}</span></div>`).join("")}</section>` : ""}<section class="field-progress"><h4>Состояние полей</h4>${orderedFields.map((field) => `<div title="${escapeHtml([field.fieldKey, field.detailCode].filter(Boolean).join(" · "))}"><span>${escapeHtml(fieldDisplayName(field.fieldKey, "Неизвестное поле"))}</span><b class="browser-field-${field.status}">${escapeHtml(fieldStatusLabel(field.status))}</b></div>`).join("") || '<div class="empty-state compact">Поля ещё не обнаружены.</div>'}</section>`;
   const audit = state.browserAudit.slice(-30).reverse();
-  $("#browser-audit").innerHTML = `<h4>Последние события</h4>${audit.map((item) => `<div class="audit-row"><time>${escapeHtml(new Date(item.recordedAt).toLocaleTimeString("ru-RU"))}</time><b>${escapeHtml(item.event)}</b><span>${escapeHtml([item.fieldKey, item.detailCode].filter(Boolean).join(" · "))}</span></div>`).join("") || '<div class="empty-state compact">Событий пока нет.</div>'}`;
+  $("#browser-audit").innerHTML = `<h4>Последние события</h4>${audit.map((item) => `<div class="audit-row" title="${escapeHtml([item.event, item.fieldKey, item.detailCode].filter(Boolean).join(" · "))}"><time>${escapeHtml(new Date(item.recordedAt).toLocaleTimeString("ru-RU"))}</time><b>${escapeHtml(browserAuditLabel(item.event))}</b><span>${escapeHtml([item.fieldKey ? fieldDisplayName(item.fieldKey, "Неизвестное поле") : null, browserDetailLabel(item.detailCode)].filter(Boolean).join(" · "))}</span></div>`).join("") || '<div class="empty-state compact">Событий пока нет.</div>'}`;
   const diagnostic = state.browserDiagnostics.at(-1);
-  $("#browser-diagnostics").innerHTML = diagnostic ? `<h4>Последний снимок</h4><div class="diagnostic-summary"><span>${escapeHtml(diagnostic.origin)}</span><span>${diagnostic.fields?.length || 0} полей</span><span>${(diagnostic.challenges || []).length} проверок</span><span>${(diagnostic.validationErrorCodes || []).length} ошибок</span><span>${escapeHtml(new Date(diagnostic.recordedAt).toLocaleString("ru-RU"))}</span></div>` : "";
+  $("#browser-diagnostics").innerHTML = diagnostic ? `<h4>Последний технический снимок</h4><div class="diagnostic-summary"><span>${escapeHtml(diagnostic.origin)}</span><span>${escapeHtml(countLabel(diagnostic.fields?.length || 0, ["поле", "поля", "полей"]))}</span><span>${(diagnostic.challenges || []).length ? escapeHtml(countLabel(diagnostic.challenges.length, ["проверка доступа", "проверки доступа", "проверок доступа"])) : "нет CAPTCHA или OTP"}</span><span>${(diagnostic.validationErrorCodes || []).length ? escapeHtml(countLabel(diagnostic.validationErrorCodes.length, ["ошибка формы", "ошибки формы", "ошибок формы"])) : "ошибок формы нет"}</span><span>${escapeHtml(new Date(diagnostic.recordedAt).toLocaleString("ru-RU"))}</span></div>` : "";
 }
 
 function resetBrowserWorkflow() {
@@ -641,9 +815,19 @@ function renderApplicationSettings() {
 function renderAnswerCatalog() {
   $("#catalog-count").textContent = state.catalog.length;
   const list = $("#answer-catalog-list");
-  list.innerHTML = state.catalog.length ? state.catalog.map((entry) => `<div class="catalog-item"><div><strong>${escapeHtml(entry.question || entry.key)}</strong><p>${escapeHtml(entry.value)}</p><small>${escapeHtml(entry.topic)} · ${escapeHtml(entry.key)}</small></div><div class="editable-actions"><button type="button" data-edit-answer="${escapeHtml(entry.key)}">Изменить</button><button type="button" data-delete data-delete-answer="${escapeHtml(entry.key)}">Удалить</button></div></div>`).join("") : '<div class="empty-state compact">Сохранённых ответов пока нет.</div>';
+  list.innerHTML = state.catalog.length ? state.catalog.map((entry) => `<div class="catalog-item"><div><strong>${escapeHtml(entry.question || "Сохранённый ответ")}</strong><p>${escapeHtml(entry.value)}</p><small>${escapeHtml(catalogTopicLabel(entry.topic))}</small></div><div class="editable-actions"><button type="button" data-edit-answer="${escapeHtml(entry.key)}">Изменить</button><button type="button" data-delete data-delete-answer="${escapeHtml(entry.key)}">Удалить</button></div></div>`).join("") : '<div class="empty-state compact">Сохранённых ответов пока нет.</div>';
   list.querySelectorAll("[data-edit-answer]").forEach((button) => button.addEventListener("click", () => editCatalogEntry(button.dataset.editAnswer)));
   list.querySelectorAll("[data-delete-answer]").forEach((button) => button.addEventListener("click", () => deleteCatalogEntry(button.dataset.deleteAnswer)));
+}
+
+function catalogTopicLabel(topic) {
+  return ({ UNKNOWN: "Другое", COVER_LETTER: "Сопроводительное письмо", DESIRED_SALARY: "Желаемая зарплата", WORK_AUTHORIZATION: "Разрешение на работу", VISA_SPONSORSHIP: "Sponsorship", RELOCATION: "Переезд", REMOTE_PREFERENCE: "Формат работы", NOTICE_PERIOD: "Notice period", START_DATE: "Дата выхода", YEARS_OF_EXPERIENCE: "Опыт в годах", BACKGROUND_CHECK: "Background check", REFERENCES: "Рекомендации" })[topic] || "Другое";
+}
+
+function catalogKey(topic, question) {
+  if (topic !== "UNKNOWN") return topic;
+  const normalized = question.toLocaleLowerCase("ru-RU").replace(/[^\p{L}\p{N}]+/gu, " ").trim().split(/\s+/).join("-").slice(0, 120);
+  return `QUESTION:${normalized}`;
 }
 
 async function loadApplicationPreferences() {
@@ -698,7 +882,6 @@ function editCatalogEntry(key) {
   if (!entry) return;
   const form = $("#answer-catalog-form");
   form.elements.key.value = entry.key;
-  form.elements.key.readOnly = true;
   form.elements.question.value = entry.question;
   form.elements.value.value = entry.value;
   form.elements.topic.value = entry.topic;
@@ -713,9 +896,10 @@ async function saveCatalogEntry(event) {
   const button = form.querySelector("button");
   busy(button, true, "Сохраняем…");
   try {
-    await request(`/api/v1/application-answers/${encodeURIComponent(values.key.trim())}`, { method: "PUT", body: { question: values.question.trim(), value: values.value.trim(), topic: values.topic } });
+    const key = values.key || catalogKey(values.topic, values.question);
+    await request(`/api/v1/application-answers/${encodeURIComponent(key)}`, { method: "PUT", body: { question: values.question.trim(), value: values.value.trim(), topic: values.topic } });
     state.catalog = await request("/api/v1/application-answers");
-    form.reset(); form.elements.key.readOnly = false; button.textContent = "Добавить ответ";
+    form.reset(); form.elements.key.value = ""; button.textContent = "Добавить ответ";
     renderAnswerCatalog(); toast("Ответ сохранён для следующих откликов");
   } catch (error) { toast(error.message, true); }
   finally { busy(button, false); }
@@ -761,6 +945,7 @@ async function selectVacancy(id, scroll = true) {
   const vacancy = state.vacancies.find((item) => item.id === id) || await request(`/api/v1/vacancies/${id}`);
   if (selection !== state.vacancySelection) return;
   state.vacancy = vacancy;
+  fillVacancyForm(vacancy);
   state.analysis = null; state.variant = null; state.draft = null; state.resumeSelection = null; clearResumePhoto();
   resetBrowserWorkflow();
   renderVacancies(); renderAnalysis(); renderVariant(); renderDraft();
@@ -788,6 +973,7 @@ async function deleteVacancy(id) {
       state.vacancySelection += 1;
       state.vacancy = null; state.analysis = null; state.variant = null; state.draft = null; state.resumeSelection = null;
       resetBrowserWorkflow();
+      fillVacancyForm(null);
       renderAnalysis(); renderDraft();
     }
     renderVacancies();
@@ -799,7 +985,7 @@ async function deleteVacancy(id) {
 async function analyzeSelectedVacancy() {
   if (!state.vacancy) return;
   const vacancyId = state.vacancy.id;
-  const button = $("#reanalyze") || $("#vacancy-form button");
+  const button = $("#reanalyze") || $("#vacancy-form button[type=submit]");
   busy(button, true, "Анализируем…");
   try {
     const analysis = await request(`/api/v1/vacancies/${vacancyId}/analyze`, { method: "POST" });
@@ -1089,9 +1275,14 @@ $("#vacancy-form").addEventListener("submit", async (event) => {
     const vacancy = await request("/api/v1/vacancies", { method: "POST", body: { source: "MANUAL", ...values, externalId: null } });
     state.vacancies.unshift(vacancy); state.vacancy = vacancy; state.analysis = null; state.variant = null; state.draft = null; state.resumeSelection = null;
     resetBrowserWorkflow();
-    renderVacancies(); form.reset(); await analyzeSelectedVacancy();
+    renderVacancies(); fillVacancyForm(vacancy); await analyzeSelectedVacancy();
   } catch (error) { toast(error.message, true); }
   finally { busy(button, false); }
+});
+
+$("#clear-vacancy-form").addEventListener("click", () => {
+  fillVacancyForm(null);
+  $("#vacancy-form").elements.company.focus();
 });
 
 $("#create-variant").addEventListener("click", createVariant);
@@ -1102,7 +1293,7 @@ $("#manual-submission-form").addEventListener("submit", recordManualSubmission);
 $("#close-manual-submission").addEventListener("click", () => $("#manual-submission-dialog").close());
 $("#cancel-manual-submission").addEventListener("click", () => $("#manual-submission-dialog").close());
 $("#refresh-browser-state").addEventListener("click", async () => {
-  try { await loadBrowserWorkflow(); toast("Состояние browser session обновлено"); }
+  try { await loadBrowserWorkflow(); toast("Состояние управляемого браузера обновлено"); }
   catch (error) { toast(error.message, true); }
 });
 $("#application-settings-form").addEventListener("submit", saveApplicationSettings);

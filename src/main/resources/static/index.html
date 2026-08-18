@@ -114,14 +114,14 @@
       </div>
       <div class="two-column wide-left">
         <article class="card">
-          <div class="card-title"><h3>Новая вакансия</h3></div>
+          <div class="card-title"><h3 id="vacancy-form-title">Новая вакансия</h3></div>
           <form id="vacancy-form" class="form-grid">
             <label><span>Компания</span><input name="company" required placeholder="Например, Acme"></label>
             <label><span>Название роли</span><input name="title" required placeholder="Senior Backend Engineer"></label>
             <label><span>Локация</span><input name="location" placeholder="Remote / Warsaw"></label>
             <label><span>Ссылка</span><input name="url" type="url" placeholder="https://…"></label>
             <label class="full"><span>Описание вакансии</span><textarea name="description" required rows="9" placeholder="Вставьте полное описание вакансии"></textarea></label>
-            <div class="full form-action"><button class="button primary" type="submit">Сохранить и проанализировать</button></div>
+            <div class="full form-action vacancy-form-actions"><button id="clear-vacancy-form" class="button text hidden" type="button">Очистить для новой вакансии</button><button class="button primary" type="submit">Сохранить и проанализировать</button></div>
           </form>
         </article>
         <aside class="card vacancies-card">
@@ -188,7 +188,7 @@
           <div class="card-title"><div><p class="eyebrow">Для следующих форм</p><h3>Каталог ответов</h3></div><span id="catalog-count" class="pill muted">0</span></div>
           <div id="answer-catalog-list" class="catalog-list"><div class="empty-state compact">Сохранённых ответов пока нет.</div></div>
           <form id="answer-catalog-form" class="compact-form catalog-form">
-            <input name="key" required maxlength="160" placeholder="Ключ, например portfolio_details">
+            <input name="key" type="hidden">
             <input name="question" required placeholder="Вопрос формы">
             <textarea name="value" required rows="3" placeholder="Ваш готовый ответ"></textarea>
             <select name="topic" aria-label="Тема ответа">
@@ -210,7 +210,7 @@
         <div id="approval-list" class="approval-list"></div>
         <section id="browser-workflow" class="browser-workflow hidden" aria-live="polite">
           <div class="browser-heading">
-            <div><p class="eyebrow">Browser session</p><h3>Ход заполнения формы</h3></div>
+            <div><p class="eyebrow">Управляемый браузер</p><h3>Ход заполнения формы</h3></div>
             <button id="refresh-browser-state" class="button text" type="button">Обновить состояние</button>
           </div>
           <div id="browser-session-summary"></div>

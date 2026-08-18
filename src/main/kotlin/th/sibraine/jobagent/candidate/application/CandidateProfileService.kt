@@ -58,6 +58,22 @@ class CandidateProfileService(
         NotFoundException("CANDIDATE_PROFILE_NOT_FOUND", "Candidate profile not found")
     }.profile
 
+    /** Adds a fact the user explicitly entered and confirmed in response to a vacancy gap. */
+    @Transactional
+    fun addConfirmedFact(type: FactType, text: String): CandidateProfile {
+        val normalizedText = text.trim()
+        require(normalizedText.isNotEmpty()) { "Confirmed fact must not be blank" }
+        require(normalizedText.length <= 4_000) { "Confirmed fact must not exceed 4000 characters" }
+        val current = get()
+        val fact = CandidateFact(
+            factId = manualFactId("fact", "${type.name}:$normalizedText"),
+            type = type,
+            text = normalizedText,
+            verified = true,
+        )
+        return put(current.copy(facts = current.facts.filterNot { it.factId == fact.factId } + fact))
+    }
+
     @Transactional(readOnly = true)
     fun identities(): List<CandidateIdentitySummary> = repository.findAllByOrderByCreatedAtAsc().map {
         CandidateIdentitySummary(

@@ -7,6 +7,7 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.time.Clock
@@ -60,6 +61,24 @@ class CandidateIdentityServiceTest {
         assertTrue("Kafka" in updated.skills)
         assertTrue(updated.facts.any { it.verified && it.type == FactType.EXPERIENCE && it.text.contains("Acme") })
         assertTrue(updated.facts.any { it.verified && it.type == FactType.SKILL && it.text == "Kafka" })
+    }
+
+    @Test
+    fun `stores an explicitly supplied gap answer as verified evidence without duplicating it`() {
+        val current = entity("Backend", active = true)
+        every { repository.findFirstByActiveTrue() } returns current
+        every { repository.findById(current.id) } returns Optional.of(current)
+
+        service.addConfirmedFact(FactType.EXPERIENCE, "Built Gradle plugins for a multi-module JVM project")
+        val updated = service.addConfirmedFact(
+            FactType.EXPERIENCE,
+            "Built Gradle plugins for a multi-module JVM project",
+        )
+
+        val facts = updated.facts.filter { it.text == "Built Gradle plugins for a multi-module JVM project" }
+        assertEquals(1, facts.size)
+        assertTrue(facts.single().verified)
+        assertEquals(FactType.EXPERIENCE, facts.single().type)
     }
 
     private fun entity(label: String, active: Boolean) = CandidateProfileEntity(

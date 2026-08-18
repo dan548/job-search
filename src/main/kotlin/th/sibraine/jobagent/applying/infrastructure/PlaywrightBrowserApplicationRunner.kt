@@ -153,16 +153,27 @@ class PlaywrightBrowserApplicationRunner(
         requireCheckpoint(session, command.expectedCheckpoint)
         val challenges = detectChallenges(session.page)
         check(challenges.isEmpty()) { "Browser submission is paused for ${challenges.joinToString()}" }
-        val submit = visibleLocators(
-            session.page.locator("form button:not([type]), button[type=submit], input[type=submit]")
-        )
-        check(submit.size == 1) { "Expected exactly one visible submit control, found ${submit.size}" }
-        submit.single().click(Locator.ClickOptions().setTimeout(properties.actionTimeoutMs))
+        val page = session.page
+        val beforeUrl = page.url()
+        val submit = submitControl(page)
+        submit.click(Locator.ClickOptions().setTimeout(properties.actionTimeoutMs))
         runCatching { session.page.waitForLoadState(LoadState.DOMCONTENTLOADED) }
-        urlPolicy.requireAllowed(session.page.url())
+        var confirmationPoll = 0
+        while (!submissionConfirmed(page, submit, beforeUrl) && confirmationPoll < SUBMIT_CONFIRMATION_POLLS) {
+            page.waitForTimeout(SUBMIT_CONFIRMATION_POLL_MS)
+            confirmationPoll++
+        }
+        urlPolicy.requireAllowed(page.url())
+        val validation = validationErrors(page)
+        check(validation.isEmpty()) {
+            "The form still has ${validation.size} invalid field(s) after Submit was pressed"
+        }
+        check(submissionConfirmed(page, submit, beforeUrl)) {
+            "The page did not confirm that the application was submitted"
+        }
         val receipt = SubmissionReceipt(
             mode = SubmissionMode.BROWSER,
-            reference = session.page.url(),
+            reference = page.url(),
             note = "Submitted by the Playwright browser runner after explicit approval.",
         )
         session.submitResults[command.idempotencyKey] = requestFingerprint to receipt
@@ -301,6 +312,27 @@ class PlaywrightBrowserApplicationRunner(
             )
         }
 
+    internal fun submitControl(page: Page): Locator {
+        val explicit = visibleLocators(page.locator("form button[type=submit], form input[type=submit]"))
+        val candidates = if (explicit.isNotEmpty()) explicit else {
+            visibleLocators(page.locator("form button:not([type])")).filter { control ->
+                val text = runCatching { control.innerText().trim() }.getOrDefault("")
+                SUBMIT_TEXT.containsMatchIn(text)
+            }
+        }
+        check(candidates.size == 1) {
+            "Expected exactly one visible submit control, found ${candidates.size}"
+        }
+        return candidates.single()
+    }
+
+    private fun submissionConfirmed(page: Page, submit: Locator, beforeUrl: String): Boolean {
+        if (page.url() != beforeUrl) return true
+        if (!runCatching { submit.isVisible }.getOrDefault(false)) return true
+        val body = runCatching { page.locator("body").innerText() }.getOrDefault("")
+        return SUBMISSION_CONFIRMED_TEXT.containsMatchIn(body)
+    }
+
     internal fun detectChallenges(page: Page): Set<BrowserChallenge> = buildSet {
         if (hasVisible(page, "iframe[src*='captcha' i], [class*='captcha' i], [id*='captcha' i]")) {
             add(BrowserChallenge.CAPTCHA)
@@ -372,17 +404,61 @@ class PlaywrightBrowserApplicationRunner(
     }
 
     private companion object {
+        private val SUBMIT_TEXT = Regex(
+            "(?i)^(submit( application)?|send( application)?|apply( now)?|отправить( отклик)?)$"
+        )
+        private val SUBMISSION_CONFIRMED_TEXT = Regex(
+            "(?i)(thank you for applying|thanks for applying|application (was )?submitted|" +
+                "successfully submitted|отклик (успешно )?отправлен)"
+        )
+        private const val SUBMIT_CONFIRMATION_POLLS = 10
+        private const val SUBMIT_CONFIRMATION_POLL_MS = 250.0
         private val FIELD_DISCOVERY_SCRIPT = """
             elements => {
-              const visible = elements.filter(el => !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length));
+              const isVisible = el => !!el && !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
+              const clean = value => (value || '').replace(/\s+/g, ' ').trim();
+              const associatedLabels = el => Array.from(el.labels || []).filter(isVisible);
+              const isUsableControl = el => isVisible(el) ||
+                ['checkbox', 'radio'].includes((el.getAttribute('type') || '').toLowerCase()) &&
+                  associatedLabels(el).length > 0;
+              const visible = elements.filter(isUsableControl);
               const seenRadio = new Set();
               const usedKeys = new Map();
               const labelledBy = el => (el.getAttribute('aria-labelledby') || '').split(/\s+/)
-                .map(id => document.getElementById(id)?.innerText || '').join(' ').trim();
-              const optionText = el => (el.labels?.[0]?.innerText || el.value || '').trim();
-              const fieldText = el => (labelledBy(el) || el.getAttribute('aria-label') ||
-                el.closest('fieldset')?.querySelector('legend')?.innerText || el.labels?.[0]?.innerText ||
-                el.getAttribute('placeholder') || el.getAttribute('name') || el.id || '').trim();
+                .map(id => document.getElementById(id)?.innerText || '').join(' ');
+              const optionText = el => clean(associatedLabels(el)[0]?.innerText || el.value || '');
+              const questionContainerLabel = el => {
+                const selectors = [
+                  '.application-question', '[data-qa*="question" i]', '[data-testid*="question" i]',
+                  '[class*="custom-question" i]', 'fieldset', 'li'
+                ];
+                for (const selector of selectors) {
+                  const container = el.closest(selector);
+                  if (!container) continue;
+                  const candidate = container.querySelector(
+                    ':scope > label, :scope > .application-label, :scope > [class*="question-label" i], ' +
+                    ':scope > [class*="question-text" i], :scope > legend, :scope > h3, :scope > h4'
+                  );
+                  const text = clean(candidate?.innerText);
+                  if (text) return text;
+                }
+                return '';
+              };
+              const precedingLabel = el => {
+                let sibling = el.parentElement?.previousElementSibling;
+                while (sibling) {
+                  if (sibling.matches('label, legend, [class*="label" i], [class*="question" i]')) {
+                    const text = clean(sibling.innerText);
+                    if (text) return text;
+                  }
+                  sibling = sibling.previousElementSibling;
+                }
+                return '';
+              };
+              const fieldText = el => clean(labelledBy(el) || el.getAttribute('aria-label') ||
+                el.closest('fieldset')?.querySelector('legend')?.innerText ||
+                questionContainerLabel(el) || associatedLabels(el)[0]?.innerText || precedingLabel(el) ||
+                el.getAttribute('placeholder') || el.getAttribute('name') || el.id || '');
               const key = (el, index) => {
                 const base = (el.id || el.getAttribute('name') || `field-${'$'}{index}`)
                   .trim().replace(/[^a-zA-Z0-9_.:-]+/g, '-');
@@ -415,7 +491,9 @@ class PlaywrightBrowserApplicationRunner(
                   fieldKey,
                   label: fieldText(el),
                   type,
-                  required: group.some(candidate => candidate.required || candidate.getAttribute('aria-required') === 'true'),
+                  required: group.some(candidate => candidate.required ||
+                    candidate.getAttribute('aria-required') === 'true') ||
+                    /[✱*]\s*$/.test(fieldText(el)),
                   placeholder: el.getAttribute('placeholder'),
                   options,
                   maxLength: el.maxLength > 0 ? el.maxLength : null,

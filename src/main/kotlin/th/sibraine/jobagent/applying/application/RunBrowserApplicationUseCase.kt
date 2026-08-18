@@ -169,6 +169,10 @@ class RunBrowserApplicationUseCase(
             }
             val actions = plan.actions.filterNot { it.fieldKey in progress.applied }
             if (actions.isEmpty()) {
+                if (application.draft.draft.status == ApplicationStatus.NEEDS_INPUT) {
+                    progress.stopReason = BrowserStopReason.PENDING_ANSWERS
+                    progress.audit += BrowserAuditEntry("RUN_PAUSED", detailCode = "PENDING_ANSWERS")
+                }
                 return finish(draftId, formUrl, baseKey, resumed, progress, outcomeFor(application))
             }
 
@@ -203,18 +207,19 @@ class RunBrowserApplicationUseCase(
                 BrowserAuditEntry("FIELD_APPLIED", it, "VALUE_REDACTED")
             }
 
-            if (result.challenges.isNotEmpty() || result.validationErrors.isNotEmpty()) {
-                progress.stopReason = if (result.challenges.isNotEmpty()) {
-                    BrowserStopReason.CHALLENGE
-                } else {
-                    BrowserStopReason.VALIDATION_ERRORS
-                }
+            if (result.challenges.isNotEmpty()) {
+                progress.stopReason = BrowserStopReason.CHALLENGE
                 progress.audit += BrowserAuditEntry("RUN_PAUSED", detailCode = pauseReason(result))
                 return finish(draftId, formUrl, baseKey, resumed, progress, BrowserRunOutcome.PAUSED)
             }
             if (application.draft.draft.status == ApplicationStatus.NEEDS_INPUT) {
                 progress.stopReason = BrowserStopReason.PENDING_ANSWERS
                 progress.audit += BrowserAuditEntry("RUN_PAUSED", detailCode = "PENDING_ANSWERS")
+                return finish(draftId, formUrl, baseKey, resumed, progress, BrowserRunOutcome.PAUSED)
+            }
+            if (result.validationErrors.isNotEmpty()) {
+                progress.stopReason = BrowserStopReason.VALIDATION_ERRORS
+                progress.audit += BrowserAuditEntry("RUN_PAUSED", detailCode = "VALIDATION_ERRORS")
                 return finish(draftId, formUrl, baseKey, resumed, progress, BrowserRunOutcome.PAUSED)
             }
 

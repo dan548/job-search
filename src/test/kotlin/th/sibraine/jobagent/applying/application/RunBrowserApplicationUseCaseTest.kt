@@ -87,6 +87,40 @@ class RunBrowserApplicationUseCaseTest {
     }
 
     @Test
+    fun `explains missing approved answers before reporting their browser validation errors`() {
+        val fixture = ApplicationWorkflowFixture()
+        val draftId = fixture.service.create(fixture.vacancyId).draft.draftId
+        val runner = RecordingRunner(
+            fields = listOf(
+                ObservedFormField("email", "Email", FormFieldType.EMAIL, true, locator = "#email"),
+                ObservedFormField(
+                    "cards-custom-field0",
+                    "Please describe your hands-on JVM experience",
+                    FormFieldType.TEXTAREA,
+                    required = true,
+                    locator = "#experience",
+                ),
+            ),
+            validationErrors = listOf(
+                BrowserValidationError("cards-custom-field0", "Please fill out this field", "VALUE_MISSING")
+            ),
+        )
+
+        val result = useCase(fixture, runner).execute(
+            draftId,
+            RunBrowserApplicationCommand("https://jobs.example/apply", "pending-answer-1"),
+        )
+
+        assertEquals(BrowserRunOutcome.PAUSED, result.outcome)
+        assertEquals(BrowserStopReason.PENDING_ANSWERS, result.session?.stopReason)
+        assertEquals(
+            "Please describe your hands-on JVM experience",
+            result.application.draft.pendingApprovals.single().question,
+        )
+        assertEquals("VALUE_MISSING", result.validationErrors.single().code)
+    }
+
+    @Test
     fun `stores only pii-free diagnostic page summaries`() {
         val fixture = ApplicationWorkflowFixture()
         val draftId = fixture.service.create(fixture.vacancyId).draft.draftId
