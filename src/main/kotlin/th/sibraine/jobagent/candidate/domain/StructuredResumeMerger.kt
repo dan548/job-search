@@ -12,14 +12,20 @@ class StructuredResumeMerger {
         val extra = addition.confirmedOnly()
         val skills = mergeBy(base.skills, extra.skills) { normalize(it.name) }
         val canonicalSkillIds = skills.associateBy({ normalize(it.name) }, { it.elementId })
+        val experiences = mergeExperiences(base.experiences, extra.experiences)
+        val canonicalExperienceIds = experiences.associateBy(::experienceKey, ResumeExperience::elementId)
+        val additionExperienceKeys = extra.experiences.associateBy(ResumeExperience::elementId, ::experienceKey)
 
         return StructuredResume(
             schemaVersion = base.schemaVersion,
             identity = base.identity ?: extra.identity,
             summary = base.summary ?: extra.summary,
             contacts = mergeBy(base.contacts, extra.contacts) { "${it.type}:${normalize(it.value)}" },
-            experiences = mergeExperiences(base.experiences, extra.experiences),
-            projects = mergeProjects(base.projects, extra.projects, extra.skills, canonicalSkillIds),
+            experiences = experiences,
+            projects = mergeProjects(
+                base.projects, extra.projects, extra.skills, canonicalSkillIds,
+                additionExperienceKeys, canonicalExperienceIds,
+            ),
             education = mergeBy(base.education, extra.education) {
                 listOf(normalize(it.institution), normalize(it.degree.orEmpty()), dateKey(it.endDate)).joinToString("|")
             },
@@ -57,13 +63,17 @@ class StructuredResumeMerger {
         addition: List<ResumeProject>,
         additionSkills: List<ResumeSkill>,
         canonicalSkillIds: Map<String, String>,
+        additionExperienceKeys: Map<String, String>,
+        canonicalExperienceIds: Map<String, String>,
     ): List<ResumeProject> {
         val additionSkillNames = additionSkills.associateBy({ it.elementId }, { normalize(it.name) })
         val remapped = addition.map { project ->
             project.copy(
                 skillElementIds = project.skillElementIds.mapNotNull { id ->
                     additionSkillNames[id]?.let(canonicalSkillIds::get)
-                }.distinct()
+                }.distinct(),
+                experienceElementId = project.experienceElementId?.let(additionExperienceKeys::get)
+                    ?.let(canonicalExperienceIds::get),
             )
         }
         val additions = remapped.groupBy { normalize(it.name) }
@@ -75,6 +85,7 @@ class StructuredResumeMerger {
                     url = merged.url ?: extra.url,
                     achievements = mergeBy(merged.achievements, extra.achievements) { normalize(it.text) },
                     skillElementIds = (merged.skillElementIds + extra.skillElementIds).distinct(),
+                    experienceElementId = merged.experienceElementId ?: extra.experienceElementId,
                 )
             }
         } + remapped.filter { normalize(it.name) !in currentKeys }

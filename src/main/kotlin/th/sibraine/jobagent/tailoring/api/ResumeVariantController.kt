@@ -3,6 +3,8 @@ package th.sibraine.jobagent.tailoring.api
 import th.sibraine.jobagent.candidate.application.CandidateProfileService
 import th.sibraine.jobagent.rendering.application.RenderResumeUseCase
 import th.sibraine.jobagent.tailoring.application.TailorResumeUseCase
+import th.sibraine.jobagent.tailoring.application.GenerateCoverLetterUseCase
+import th.sibraine.jobagent.tailoring.domain.CoverLetter
 import th.sibraine.jobagent.tailoring.domain.ResumeVariant
 import th.sibraine.jobagent.tailoring.domain.ResumeContentSelection
 import th.sibraine.jobagent.tailoring.domain.ResumeContentSelectionRequest
@@ -19,6 +21,7 @@ class ResumeVariantController(
     private val tailorResume: TailorResumeUseCase,
     private val profiles: CandidateProfileService,
     private val renderResume: RenderResumeUseCase,
+    private val generateCoverLetter: GenerateCoverLetterUseCase,
 ) {
     @PostMapping("/vacancies/{vacancyId}/resume-variants")
     @ResponseStatus(HttpStatus.CREATED)
@@ -36,6 +39,14 @@ class ResumeVariantController(
 
     @GetMapping("/resume-variants/{variantId}")
     fun get(@PathVariable variantId: UUID): ResumeVariant = tailorResume.get(variantId)
+
+    @PostMapping("/resume-variants/{variantId}/review-approval")
+    fun approveReview(@PathVariable variantId: UUID): ResumeVariant =
+        tailorResume.approveReview(profiles.profileId, variantId)
+
+    @PostMapping("/resume-variants/{variantId}/cover-letter")
+    fun coverLetter(@PathVariable variantId: UUID): CoverLetter =
+        generateCoverLetter.execute(profiles.profileId, variantId)
 
     @GetMapping("/resume-variants/{variantId}/pdf", produces = [MediaType.APPLICATION_PDF_VALUE])
     fun pdf(@PathVariable variantId: UUID): ResponseEntity<ByteArray> {

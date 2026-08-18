@@ -49,4 +49,37 @@ class ResumeContentSelectionTest {
         assertTrue(selected.experiences.isEmpty())
         assertEquals(listOf("Kafka"), selected.skills.map { it.name })
     }
+
+    @Test
+    fun `selects education individually attaches photo and removes projects with excluded experience`() {
+        val resume = StructuredResume(
+            experiences = listOf(
+                ResumeExperience("exp-1", "Acme", "Engineer", metadata = confirmed),
+                ResumeExperience("exp-2", "Beta", "Lead", metadata = confirmed),
+            ),
+            projects = listOf(
+                ResumeProject("project-1", "Acme Platform", metadata = confirmed, experienceElementId = "exp-1"),
+                ResumeProject("project-2", "Independent", metadata = confirmed),
+            ),
+            education = listOf(
+                ResumeEducation("edu-1", "University One", degree = "BSc", metadata = confirmed),
+                ResumeEducation("edu-2", "University Two", degree = "MSc", metadata = confirmed),
+            ),
+        )
+        val photo = "data:image/png;base64,iVBORw0KGgo="
+
+        val selected = CanonicalResumeAssembler().select(
+            resume,
+            ResumeContentSelectionRequest(
+                experienceElementIds = listOf("exp-2"),
+                educationElementIds = listOf("edu-2"),
+                photoDataUri = photo,
+            ),
+        )
+
+        assertEquals(listOf("exp-2"), selected.experiences.map { it.elementId })
+        assertEquals(listOf("project-2"), selected.projects.map { it.elementId })
+        assertEquals(listOf("edu-2"), selected.education.map { it.elementId })
+        assertEquals(photo, selected.photo?.dataUri)
+    }
 }

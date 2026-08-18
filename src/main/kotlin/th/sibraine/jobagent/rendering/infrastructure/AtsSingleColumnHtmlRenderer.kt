@@ -12,15 +12,23 @@ data class ResumeHtmlDocument(
 
 @Component
 class AtsSingleColumnHtmlRenderer {
-    fun render(resume: StructuredResume): ResumeHtmlDocument {
+    fun render(resume: StructuredResume, compact: Boolean = false): ResumeHtmlDocument {
         val blocks = visibleTextBlocks(resume)
         val linkCount = resume.contacts.count { contactHref(it) != null } + resume.projects.count { safeWebUrl(it.url) != null }
         val html = buildString {
             append("""<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml"><head><meta charset="UTF-8"/><style>""")
             append(CSS)
-            append("</style></head><body>")
+            append("</style></head><body")
+            if (compact) append(" class=\"compact\"")
+            append(">")
             if (resume.identity != null || resume.contacts.isNotEmpty()) {
-                append("<header>")
+                append("<header")
+                if (resume.photo != null) append(" class=\"with-photo\"")
+                append(">")
+                resume.photo?.let { photo ->
+                    append("<img class=\"photo\" src=\"").append(escapeAttribute(photo.dataUri)).append("\" alt=\"\"/>")
+                    append("<div class=\"header-copy\">")
+                }
                 resume.identity?.let { identity ->
                     append("<h1>").append(escape(identity.fullName)).append("</h1>")
                     identity.headline?.takeIf { it.isNotBlank() }?.let {
@@ -41,6 +49,7 @@ class AtsSingleColumnHtmlRenderer {
                     }
                     append("</div>")
                 }
+                if (resume.photo != null) append("</div>")
                 append("</header>")
             }
             resume.summary?.let { section("Summary") { paragraph(it.text) } }
@@ -48,10 +57,13 @@ class AtsSingleColumnHtmlRenderer {
                 paragraph(resume.skills.joinToString(" | ") { it.name }, "skills")
             }
             if (resume.experiences.isNotEmpty()) section("Experience") {
-                resume.experiences.forEach { experience(it) }
+                resume.experiences.forEach { value ->
+                    experience(value, resume.projects.filter { it.experienceElementId == value.elementId })
+                }
             }
-            if (resume.projects.isNotEmpty()) section("Projects") {
-                resume.projects.forEach { project(it) }
+            val standaloneProjects = resume.projects.filter { it.experienceElementId == null }
+            if (standaloneProjects.isNotEmpty()) section("Projects") {
+                standaloneProjects.forEach { project(it) }
             }
             if (resume.education.isNotEmpty()) section("Education") {
                 resume.education.forEach { education(it) }
@@ -81,7 +93,7 @@ class AtsSingleColumnHtmlRenderer {
         append(">").append(escape(text)).append("</p>")
     }
 
-    private fun StringBuilder.experience(value: ResumeExperience) {
+    private fun StringBuilder.experience(value: ResumeExperience, projects: List<ResumeProject>) {
         append("<article><table><tr><td><h3>").append(escape(value.role)).append("</h3></td><td class=\"date\">")
             .append(escape(dateRange(value.startDate, value.endDate, value.current))).append("</td></tr></table>")
         append("<div class=\"subhead\">").append(escape(listOfNotNull(value.company, value.location).joinToString(" | ")))
@@ -92,18 +104,20 @@ class AtsSingleColumnHtmlRenderer {
                 .append(escape(it.joinToString(" | "))).append("</div>")
         }
         bullets(value.achievements)
+        projects.forEach { project(it, nested = true) }
         append("</article>")
     }
 
-    private fun StringBuilder.project(value: ResumeProject) {
-        append("<article><h3>")
+    private fun StringBuilder.project(value: ResumeProject, nested: Boolean = false) {
+        if (!nested) append("<article>")
+        append(if (nested) "<div class=\"nested-project\"><h4>" else "<h3>")
         val href = safeWebUrl(value.url)
         if (href != null) append("<a href=\"").append(escapeAttribute(href)).append("\">").append(escape(value.name)).append("</a>")
         else append(escape(value.name))
-        append("</h3>")
+        append(if (nested) "</h4>" else "</h3>")
         value.description?.takeIf { it.isNotBlank() }?.let { paragraph(it) }
         bullets(value.achievements)
-        append("</article>")
+        append(if (nested) "</div>" else "</article>")
     }
 
     private fun StringBuilder.education(value: ResumeEducation) {
@@ -189,15 +203,19 @@ class AtsSingleColumnHtmlRenderer {
             * { box-sizing: border-box; }
             body { color: #17212b; font-family: 'Liberation Sans'; font-size: 9.5pt; line-height: 1.34; margin: 0; }
             header { border-bottom: 1.2pt solid #243b53; padding-bottom: 7pt; margin-bottom: 9pt; text-align: center; }
+            header.with-photo { display: table; table-layout: fixed; width: 100%; text-align: left; }
+            .photo { border-radius: 4pt; display: table-cell; height: 27mm; object-fit: cover; vertical-align: middle; width: 27mm; }
+            .header-copy { display: table-cell; padding-left: 8pt; vertical-align: middle; }
             h1 { font-size: 22pt; line-height: 1.05; letter-spacing: .2pt; margin: 0 0 3pt; }
             .headline { color: #334e68; font-size: 11pt; font-weight: bold; margin-bottom: 4pt; }
             .contacts { color: #486581; font-size: 8.7pt; }
             a { color: #1f5f8b; text-decoration: none; }
             .separator { color: #9fb3c8; }
             section { margin-top: 8pt; }
-            h2 { border-bottom: .7pt solid #9fb3c8; color: #243b53; font-size: 10pt; letter-spacing: .8pt; margin: 0 0 4pt; padding-bottom: 2pt; text-transform: uppercase; }
+            h2 { border-bottom: .7pt solid #9fb3c8; color: #243b53; font-size: 10pt; letter-spacing: .8pt; margin: 0 0 4pt; padding-bottom: 2pt; page-break-after: avoid; text-transform: uppercase; }
             article { margin: 0 0 6pt; page-break-inside: avoid; }
             h3 { font-size: 10pt; line-height: 1.2; margin: 0; }
+            h4 { font-size: 9pt; line-height: 1.2; margin: 0; }
             table { border-collapse: collapse; table-layout: fixed; width: 100%; }
             td { padding: 0; vertical-align: top; }
             td.date { color: #486581; font-size: 8.5pt; text-align: right; white-space: nowrap; width: 29%; }
@@ -206,7 +224,15 @@ class AtsSingleColumnHtmlRenderer {
             p { margin: 2pt 0 4pt; orphans: 2; widows: 2; }
             p.skills { line-height: 1.45; }
             ul { margin: 2pt 0 0 14pt; padding: 0; }
-            li { margin: 0 0 2pt; padding-left: 2pt; }
+            li { margin: 0 0 2pt; orphans: 2; padding-left: 2pt; page-break-inside: avoid; widows: 2; }
+            .nested-project { border-left: 1pt solid #d9e2ec; margin: 4pt 0 0 4pt; padding-left: 7pt; page-break-inside: avoid; }
+            body.compact { font-size: 8.7pt; line-height: 1.24; }
+            body.compact header { margin-bottom: 6pt; padding-bottom: 5pt; }
+            body.compact h1 { font-size: 19pt; }
+            body.compact .photo { height: 23mm; width: 23mm; }
+            body.compact section { margin-top: 5pt; }
+            body.compact article { margin-bottom: 4pt; }
+            body.compact p, body.compact li { margin-bottom: 1pt; }
         """.trimIndent()
     }
 }

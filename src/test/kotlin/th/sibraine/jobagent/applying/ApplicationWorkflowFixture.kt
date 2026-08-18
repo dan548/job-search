@@ -27,6 +27,7 @@ import java.util.UUID
 class ApplicationWorkflowFixture(
     val vacancyId: UUID = UUID.randomUUID(),
     val variantId: UUID = UUID.randomUUID(),
+    val variantReviewedAt: Instant? = Instant.EPOCH,
 ) {
     val profileId: UUID = UUID.fromString(SINGLE_USER_PROFILE_ID)
     var settings: ApplicationSettings = ApplicationSettings()
@@ -239,6 +240,7 @@ class ApplicationWorkflowFixture(
         resume = resume(),
         diff = emptyList(),
         createdAt = Instant.EPOCH,
+        reviewedAt = variantReviewedAt,
     )
 
     private fun resume() = StructuredResume(

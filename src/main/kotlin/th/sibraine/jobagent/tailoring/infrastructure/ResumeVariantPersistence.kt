@@ -3,6 +3,7 @@ package th.sibraine.jobagent.tailoring.infrastructure
 import th.sibraine.jobagent.candidate.domain.ResumeDiffChange
 import th.sibraine.jobagent.candidate.domain.StructuredResume
 import th.sibraine.jobagent.tailoring.domain.ResumeVariant
+import th.sibraine.jobagent.tailoring.domain.CoverLetter
 import th.sibraine.jobagent.tailoring.domain.TailoringPlan
 import jakarta.persistence.*
 import org.hibernate.annotations.JdbcTypeCode
@@ -47,6 +48,12 @@ class ResumeVariantEntity(
     val diff: List<ResumeDiffChange>,
     @Column(name = "created_at", nullable = false)
     val createdAt: Instant,
+    @Column(name = "reviewed_at")
+    var reviewedAt: Instant? = null,
+    @Column(name = "cover_letter_text", columnDefinition = "text")
+    var coverLetterText: String? = null,
+    @Column(name = "cover_letter_generated_at")
+    var coverLetterGeneratedAt: Instant? = null,
 ) {
     fun toDomain() = ResumeVariant(
         variantId = variantId,
@@ -61,6 +68,10 @@ class ResumeVariantEntity(
         resume = resume,
         diff = diff,
         createdAt = createdAt,
+        reviewedAt = reviewedAt,
+        coverLetter = coverLetterText?.let { text ->
+            CoverLetter(text, requireNotNull(coverLetterGeneratedAt) { "Cover letter timestamp is missing" })
+        },
     )
 }
 

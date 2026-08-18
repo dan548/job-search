@@ -9,11 +9,13 @@ import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
+import java.time.Instant
 import java.util.UUID
 
 data class CreateApplicationDraftRequest(val resumeVariantId: UUID? = null)
 data class ApplicationAnswersRequest(val answers: List<th.sibraine.jobagent.applying.application.AnswerSubmission>)
 data class SubmitApplicationRequest(val reference: String? = null)
+data class ManualSubmissionRequest(val submittedAt: Instant, val reference: String, val note: String? = null)
 data class FailApplicationRequest(val reason: String)
 
 @RestController
@@ -65,6 +67,17 @@ class ApplicationDraftController(private val service: ApplicationDraftService) {
         @PathVariable draftId: UUID,
         @RequestBody(required = false) request: SubmitApplicationRequest?,
     ): ApplicationDraftView = service.submit(draftId, request?.reference)
+
+    @PostMapping("/application-drafts/{draftId}/manual-submission")
+    fun recordManualSubmission(
+        @PathVariable draftId: UUID,
+        @RequestBody request: ManualSubmissionRequest,
+    ): ApplicationDraftView = service.recordManualSubmission(
+        draftId = draftId,
+        submittedAt = request.submittedAt,
+        reference = request.reference,
+        note = request.note,
+    )
 
     @PostMapping("/application-drafts/{draftId}/fail")
     fun fail(

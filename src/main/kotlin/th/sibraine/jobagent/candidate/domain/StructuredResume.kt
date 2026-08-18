@@ -11,6 +11,7 @@ data class StructuredResume(
     val certifications: List<ResumeCertification> = emptyList(),
     val languages: List<ResumeLanguage> = emptyList(),
     val skills: List<ResumeSkill> = emptyList(),
+    val photo: ResumePhoto? = null,
 ) {
     companion object {
         const val CURRENT_SCHEMA_VERSION = 1
@@ -22,6 +23,10 @@ data class ResumeIdentity(
     val fullName: String,
     val headline: String? = null,
     val metadata: ResumeElementMetadata = ResumeElementMetadata(),
+)
+
+data class ResumePhoto(
+    val dataUri: String,
 )
 
 data class ResumeTextElement(
@@ -62,6 +67,7 @@ data class ResumeProject(
     val achievements: List<ResumeTextElement> = emptyList(),
     val skillElementIds: List<String> = emptyList(),
     val metadata: ResumeElementMetadata = ResumeElementMetadata(),
+    val experienceElementId: String? = null,
 )
 
 data class ResumeEducation(
@@ -179,15 +185,19 @@ fun StructuredResume.elementRefs(): List<ResumeElementRef> = buildList {
 fun StructuredResume.confirmedOnly(): StructuredResume {
     val confirmedSkills = skills.filter { it.metadata.isConfirmed() }
     val confirmedSkillIds = confirmedSkills.map { it.elementId }.toSet()
+    val confirmedExperiences = experiences.filter { it.metadata.isConfirmed() }.map { experience ->
+        experience.copy(achievements = experience.achievements.filter { it.metadata.isConfirmed() })
+    }
+    val confirmedExperienceIds = confirmedExperiences.map { it.elementId }.toSet()
     return StructuredResume(
         schemaVersion = schemaVersion,
         identity = identity?.takeIf { it.metadata.isConfirmed() },
         summary = summary?.takeIf { it.metadata.isConfirmed() },
         contacts = contacts.filter { it.metadata.isConfirmed() },
-        experiences = experiences.filter { it.metadata.isConfirmed() }.map { experience ->
-            experience.copy(achievements = experience.achievements.filter { it.metadata.isConfirmed() })
-        },
-        projects = projects.filter { it.metadata.isConfirmed() }.map { project ->
+        experiences = confirmedExperiences,
+        projects = projects.filter {
+            it.metadata.isConfirmed() && (it.experienceElementId == null || it.experienceElementId in confirmedExperienceIds)
+        }.map { project ->
             project.copy(
                 achievements = project.achievements.filter { it.metadata.isConfirmed() },
                 skillElementIds = project.skillElementIds.filter { it in confirmedSkillIds },
@@ -278,6 +288,14 @@ class StructuredResumeValidator {
         require(resume.projects.flatMap { it.skillElementIds }.all { it in skillIds }) {
             "Project skillElementIds must reference skills from the same resume"
         }
+        val experienceIds = resume.experiences.map { it.elementId }.toSet()
+        require(resume.projects.mapNotNull { it.experienceElementId }.all { it in experienceIds }) {
+            "Project experienceElementId must reference an experience from the same resume"
+        }
+        resume.photo?.let {
+            require(PHOTO_DATA_URI.matches(it.dataUri)) { "Resume photo must be a base64 encoded JPEG or PNG image" }
+            require(it.dataUri.length <= MAX_PHOTO_DATA_URI_LENGTH) { "Resume photo must not exceed 2 MB" }
+        }
     }
 
     private data class Element(val elementId: String, val metadata: ResumeElementMetadata)
@@ -320,5 +338,10 @@ class StructuredResumeValidator {
         val startValue = start.year * 12 + (start.month ?: 1)
         val endValue = end.year * 12 + (end.month ?: 12)
         return startValue <= endValue
+    }
+
+    companion object {
+        private val PHOTO_DATA_URI = Regex("^data:image/(?:jpeg|png);base64,[A-Za-z0-9+/]+={0,2}$")
+        private const val MAX_PHOTO_DATA_URI_LENGTH = 2_800_000
     }
 }

@@ -14,13 +14,16 @@ data class ResumeSelectionOption(
 data class ResumeContentSelection(
     val contacts: List<ResumeSelectionOption>,
     val experiences: List<ResumeSelectionOption>,
+    val education: List<ResumeSelectionOption>,
     val skills: List<ResumeSelectionOption>,
 )
 
 data class ResumeContentSelectionRequest(
     val contactElementIds: List<String>? = null,
     val experienceElementIds: List<String>? = null,
+    val educationElementIds: List<String>? = null,
     val skillElementIds: List<String>? = null,
+    val photoDataUri: String? = null,
 )
 
 class CanonicalResumeAssembler {
@@ -70,6 +73,13 @@ class CanonicalResumeAssembler {
                     selectedByDefault = it.elementId in relevantExperiences,
                 )
             },
+            education = resume.education.map {
+                ResumeSelectionOption(
+                    it.elementId,
+                    listOfNotNull(it.degree, it.fieldOfStudy).joinToString(", ").ifBlank { it.institution },
+                    it.institution,
+                )
+            },
             skills = resume.skills.map { ResumeSelectionOption(it.elementId, it.name, selectedByDefault = it.elementId in relevantSkills) },
         )
     }
@@ -78,14 +88,18 @@ class CanonicalResumeAssembler {
         if (request == null) return resume
         val contacts = request.contactElementIds?.toSet()
         val experiences = request.experienceElementIds?.toSet()
+        val education = request.educationElementIds?.toSet()
         val skills = request.skillElementIds?.toSet()
+        val selectedExperienceIds = experiences ?: resume.experiences.map { it.elementId }.toSet()
         return resume.copy(
             contacts = contacts?.let { selected -> resume.contacts.filter { it.elementId in selected } } ?: resume.contacts,
             experiences = experiences?.let { selected -> resume.experiences.filter { it.elementId in selected } } ?: resume.experiences,
+            education = education?.let { selected -> resume.education.filter { it.elementId in selected } } ?: resume.education,
             skills = skills?.let { selected -> resume.skills.filter { it.elementId in selected } } ?: resume.skills,
-            projects = resume.projects.map { project ->
+            projects = resume.projects.filter { it.experienceElementId == null || it.experienceElementId in selectedExperienceIds }.map { project ->
                 project.copy(skillElementIds = project.skillElementIds.filter { id -> skills == null || id in skills })
             },
+            photo = request.photoDataUri?.takeIf { it.isNotBlank() }?.let(::ResumePhoto),
         )
     }
 

@@ -13,6 +13,16 @@ class ApplicationDraftServiceTest {
     private val service = fixture.service
 
     @Test
+    fun `rejects an application draft until the tailored resume is reviewed`() {
+        val unreviewed = ApplicationWorkflowFixture(variantReviewedAt = null)
+
+        val error = assertThrows<ConflictException> { unreviewed.service.create(unreviewed.vacancyId, unreviewed.variantId) }
+
+        assertEquals("RESUME_VARIANT_REVIEW_REQUIRED", error.code)
+        assertTrue(unreviewed.draftRows.isEmpty())
+    }
+
+    @Test
     fun `replays the same run key and rejects reuse for another observed form`() {
         val draftId = createDraft()
         val command = StartRunCommand(form(), "https://jobs.example/apply", "attempt-1")
@@ -72,6 +82,31 @@ class ApplicationDraftServiceTest {
         assertEquals("ACME-2026-17", submitted.draft.submission!!.reference)
         assertEquals(approval.approvalId, submitted.draft.submission!!.approvalId)
         assertEquals(submitted.draft, service.submit(draftId).draft)
+    }
+
+    @Test
+    fun `records a manually completed application without invoking the configured submitter`() {
+        val draftId = createDraft()
+        service.startRun(draftId, StartRunCommand(observedFields = form()))
+        service.answer(draftId, listOf(AnswerSubmission("salary", "28000 PLN per month")))
+        val approval = service.requestSubmitApproval(draftId)
+        service.decideApproval(draftId, approval.approvalId, ApprovalDecision(approved = true))
+        fixture.submitter = object : ApplicationSubmitter {
+            override fun submit(command: SubmissionCommand): SubmissionReceipt =
+                error("A manual record must not invoke a submitter")
+        }
+
+        val submitted = service.recordManualSubmission(
+            draftId,
+            submittedAt = java.time.Instant.now(fixture.clock),
+            reference = "GREENHOUSE-42",
+            note = "Confirmation page saved",
+        )
+
+        assertEquals(ApplicationStatus.SUBMITTED, submitted.draft.status)
+        assertEquals(SubmissionMode.MANUAL, submitted.draft.submission!!.mode)
+        assertEquals("GREENHOUSE-42", submitted.draft.submission!!.reference)
+        assertEquals("Confirmation page saved", submitted.draft.submission!!.note)
     }
 
     @Test

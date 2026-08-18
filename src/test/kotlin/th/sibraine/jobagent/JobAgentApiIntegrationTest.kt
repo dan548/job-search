@@ -30,6 +30,7 @@ import org.testcontainers.containers.PostgreSQLContainer
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
 import java.io.ByteArrayOutputStream
+import java.time.Instant
 import java.util.UUID
 
 @SpringBootTest
@@ -214,6 +215,151 @@ class JobAgentApiIntegrationTest @Autowired constructor(
                 jsonPath("$.variantId") { value(variantId.toString()) }
             }
         mvc.get("/api/v1/resume-variants/$variantId").andExpect { status { isOk() } }
+
+        mvc.post("/api/v1/resume-variants/$variantId/cover-letter")
+            .andExpect {
+                status { isOk() }
+                jsonPath("$.text") { isNotEmpty() }
+                jsonPath("$.generatedAt") { exists() }
+            }
+        assertNotNull(variants.findByVariantId(variantId)?.coverLetterText)
+    }
+
+    @Test
+    fun `personal MVP happy path completes from PDF import to a recorded submission`() {
+        val suffix = UUID.randomUUID().toString().take(8)
+        val identityBody = mvc.post("/api/v1/candidate-identities") {
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"label":"E2E $suffix","displayName":"Ada E2E"}"""
+        }.andExpect { status { isCreated() } }.andReturn().response.contentAsString
+        val profileId = objectMapper.readTree(identityBody)["id"].asText()
+
+        mvc.post("/api/v1/candidate-profile/contacts") {
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"type":"EMAIL","value":"ada-$suffix@example.com","label":"E2E"}"""
+        }.andExpect { status { isCreated() } }
+
+        val previewBody = mvc.multipart("/api/v1/candidate-profile/resume-imports") {
+            file(MockMultipartFile(
+                "file", "resume-$suffix.pdf", "application/pdf",
+                pdfWithText("Backend Engineer with Kotlin Spring Boot and PostgreSQL"),
+            ))
+        }.andExpect {
+            status { isCreated() }
+            jsonPath("$.status") { value("PREVIEW") }
+            jsonPath("$.structuredResume.skills.length()", greaterThan(0))
+        }.andReturn().response.contentAsString
+        val preview = objectMapper.readTree(previewBody)
+        val importId = preview["importId"].asText()
+        val reviewedSkills = preview["structuredResume"]["skills"].map { skill ->
+            mapOf(
+                "elementId" to skill["elementId"].asText(),
+                "name" to skill["name"].asText(),
+                "category" to skill["category"]?.takeUnless(JsonNode::isNull)?.asText(),
+                "metadata" to mapOf("reviewStatus" to "CONFIRMED"),
+            )
+        }
+        mvc.post("/api/v1/candidate-profile/resume-imports/$importId/confirm") {
+            contentType = MediaType.APPLICATION_JSON
+            content = objectMapper.writeValueAsString(mapOf(
+                "structuredResume" to mapOf("schemaVersion" to 1, "skills" to reviewedSkills),
+                "mode" to "ENRICH",
+            ))
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.status") { value("CONFIRMED") }
+        }
+
+        val vacancyBody = mvc.post("/api/v1/vacancies") {
+            contentType = MediaType.APPLICATION_JSON
+            content = """{
+              "source":"MANUAL","externalId":"e2e-$suffix","url":"https://jobs.example.com/$suffix",
+              "company":"E2E Company","title":"Kotlin Backend Engineer",
+              "description":"Required: Kotlin, Spring Boot and PostgreSQL.","location":"Remote"
+            }"""
+        }.andExpect { status { isCreated() } }.andReturn().response.contentAsString
+        val vacancyId = objectMapper.readTree(vacancyBody)["id"].asText()
+        mvc.post("/api/v1/vacancies/$vacancyId/analyze").andExpect {
+            status { isOk() }
+            jsonPath("$.match.score") { isNumber() }
+        }
+
+        val variantBody = mvc.post("/api/v1/vacancies/$vacancyId/resume-variants")
+            .andExpect {
+                status { isCreated() }
+                jsonPath("$.candidateProfileId") { value(profileId) }
+                jsonPath("$.reviewedAt") { doesNotExist() }
+            }.andReturn().response.contentAsString
+        val variantId = objectMapper.readTree(variantBody)["variantId"].asText()
+        mvc.post("/api/v1/resume-variants/$variantId/review-approval").andExpect {
+            status { isOk() }
+            jsonPath("$.reviewedAt") { exists() }
+        }
+        mvc.get("/api/v1/resume-variants/$variantId/pdf").andExpect {
+            status { isOk() }
+            header { string("X-Resume-ATS-Check", "passed") }
+            header { exists("X-Resume-Page-Count") }
+            content { contentType(MediaType.APPLICATION_PDF) }
+        }
+
+        mvc.put("/api/v1/application-settings") {
+            contentType = MediaType.APPLICATION_JSON
+            content = """{
+              "desiredSalary":{"amount":120000,"currency":"USD","period":"YEAR","negotiable":true},
+              "requiresSponsorship":false,"remotePreference":"Remote","noticePeriod":"30 days"
+            }"""
+        }.andExpect { status { isOk() } }
+
+        val draftBody = mvc.post("/api/v1/vacancies/$vacancyId/application-drafts") {
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"resumeVariantId":"$variantId"}"""
+        }.andExpect { status { isCreated() } }.andReturn().response.contentAsString
+        val draftId = objectMapper.readTree(draftBody)["draft"]["draftId"].asText()
+        mvc.post("/api/v1/application-drafts/$draftId/runs") {
+            contentType = MediaType.APPLICATION_JSON
+            content = """{
+              "formUrl":"https://jobs.example.com/$suffix/apply","idempotencyKey":"e2e-$suffix",
+              "observedFields":[
+                {"fieldKey":"full_name","label":"Full name","required":true},
+                {"fieldKey":"email","label":"Email","type":"EMAIL","required":true},
+                {"fieldKey":"salary","label":"Desired salary","required":true}
+              ]
+            }"""
+        }.andExpect {
+            status { isCreated() }
+            jsonPath("$.draft.draft.status") { value("READY_TO_SUBMIT") }
+            jsonPath("$.draft.draft.answers.length()") { value(3) }
+            jsonPath("$.draft.artifacts[0].type") { value("RESUME_PDF") }
+        }
+
+        val approvalBody = mvc.post("/api/v1/application-drafts/$draftId/submit-approval")
+            .andExpect { status { isCreated() } }.andReturn().response.contentAsString
+        val approvalId = objectMapper.readTree(approvalBody)["approvalId"].asText()
+        mvc.post("/api/v1/application-drafts/$draftId/approvals/$approvalId/decision") {
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"approved":true,"note":"E2E final review completed"}"""
+        }.andExpect { status { isOk() } }
+        val submittedAt = Instant.now()
+        mvc.post("/api/v1/application-drafts/$draftId/manual-submission") {
+            contentType = MediaType.APPLICATION_JSON
+            content = objectMapper.writeValueAsString(mapOf(
+                "submittedAt" to submittedAt,
+                "reference" to "E2E-$suffix",
+                "note" to "Automated personal MVP happy path",
+            ))
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.draft.status") { value("SUBMITTED") }
+            jsonPath("$.draft.submission.mode") { value("MANUAL") }
+            jsonPath("$.draft.submission.reference") { value("E2E-$suffix") }
+            jsonPath("$.pendingApprovals.length()") { value(0) }
+        }
+
+        mvc.get("/api/v1/vacancies/$vacancyId/application-drafts/latest").andExpect {
+            status { isOk() }
+            jsonPath("$.draft.status") { value("SUBMITTED") }
+            jsonPath("$.draft.resumeVariantId") { value(variantId) }
+        }
     }
 
     private fun pdfWithText(text: String): ByteArray {

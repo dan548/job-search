@@ -101,7 +101,7 @@
           <div><p class="eyebrow">Требуется ваше решение</p><h3>Проверьте распознанные данные</h3></div>
           <div class="review-actions"><button id="select-all" class="button text" type="button">Выбрать всё</button><span id="review-count">0 из 0</span></div>
         </div>
-        <p class="review-note">Отмеченное будет подтверждено, неотмеченное — отклонено. В профиль попадут только подтверждённые элементы.</p>
+        <p class="review-note">Сверьте данные с раскрываемым источником и при необходимости нажмите «Исправить». Отмеченное будет подтверждено, неотмеченное — отклонено.</p>
         <div id="review-list" class="review-list"></div>
         <div class="sticky-action"><button id="confirm-resume" class="button primary" type="button">Сохранить проверку и обновить профиль</button></div>
       </article>
@@ -150,6 +150,11 @@
         <div id="resume-selection" class="resume-selection hidden">
           <div class="selection-heading"><div><h3>Что включить в резюме</h3><p>Мы отметили рекомендуемый набор. Перед генерацией его можно изменить.</p></div><button id="selection-defaults" class="button text" type="button">Вернуть рекомендации</button></div>
           <div id="selection-groups" class="selection-groups"></div>
+          <div class="photo-selection">
+            <label for="resume-photo"><span>Фото (необязательно)</span><input id="resume-photo" type="file" accept="image/jpeg,image/png"></label>
+            <div><span id="resume-photo-name">Без фото</span><button id="remove-resume-photo" class="button text hidden" type="button">Убрать фото</button></div>
+            <small>JPEG или PNG, до 2 МБ. Фото используется только в создаваемой версии резюме.</small>
+          </div>
         </div>
         <div id="variant-details" class="variant-details hidden"></div>
       </article>
@@ -160,18 +165,92 @@
         <div><span class="section-number">04</span><p class="eyebrow">Контроль</p><h2>Отклик и подтверждение</h2></div>
         <p>Автозаполнение останавливается на неизвестных вопросах. Финальная отправка всегда требует отдельного подтверждения.</p>
       </div>
+      <div class="application-preferences">
+        <article class="card">
+          <div class="card-title"><div><p class="eyebrow">Используются только явно</p><h3>Настройки отклика</h3></div><span id="settings-state" class="pill muted">Не заполнено</span></div>
+          <form id="application-settings-form" class="form-grid">
+            <label><span>Желаемая зарплата</span><input name="salaryAmount" type="number" min="1" step="any" placeholder="Например, 120000"></label>
+            <label><span>Валюта</span><input name="salaryCurrency" maxlength="3" placeholder="USD"></label>
+            <label><span>Период зарплаты</span><select name="salaryPeriod"><option value="YEAR">В год</option><option value="MONTH">В месяц</option><option value="HOUR">В час</option></select></label>
+            <label class="checkbox-line"><input name="salaryNegotiable" type="checkbox"><span>Готов обсуждать сумму</span></label>
+            <label class="full"><span>Разрешение на работу — по одной стране в строке: страна | статус</span><textarea name="workAuthorizations" rows="3" placeholder="Казахстан | гражданин&#10;Польша | разрешение на работу"></textarea></label>
+            <label><span>Нужен sponsorship</span><select name="requiresSponsorship"><option value="">Не указано</option><option value="false">Нет</option><option value="true">Да</option></select></label>
+            <label><span>Готовность к переезду</span><select name="relocationWilling"><option value="">Не указано</option><option value="false">Нет</option><option value="true">Да</option></select></label>
+            <label class="full"><span>Локации для переезда</span><input name="relocationLocations" placeholder="Варшава, Берлин, Прага"></label>
+            <label class="full"><span>Комментарий о переезде</span><input name="relocationNotes" placeholder="Например, после оформления визы"></label>
+            <label><span>Предпочтение по формату</span><input name="remotePreference" placeholder="Remote / Hybrid / On-site"></label>
+            <label><span>Notice period</span><input name="noticePeriod" placeholder="Например, 30 дней"></label>
+            <label><span>Самая ранняя дата выхода</span><input name="earliestStartDate" type="date"></label>
+            <div class="form-action"><button class="button primary" type="submit">Сохранить настройки</button></div>
+          </form>
+        </article>
+        <article class="card">
+          <div class="card-title"><div><p class="eyebrow">Для следующих форм</p><h3>Каталог ответов</h3></div><span id="catalog-count" class="pill muted">0</span></div>
+          <div id="answer-catalog-list" class="catalog-list"><div class="empty-state compact">Сохранённых ответов пока нет.</div></div>
+          <form id="answer-catalog-form" class="compact-form catalog-form">
+            <input name="key" required maxlength="160" placeholder="Ключ, например portfolio_details">
+            <input name="question" required placeholder="Вопрос формы">
+            <textarea name="value" required rows="3" placeholder="Ваш готовый ответ"></textarea>
+            <select name="topic" aria-label="Тема ответа">
+              <option value="UNKNOWN">Другое</option><option value="COVER_LETTER">Сопроводительное письмо</option><option value="DESIRED_SALARY">Желаемая зарплата</option><option value="WORK_AUTHORIZATION">Разрешение на работу</option><option value="VISA_SPONSORSHIP">Sponsorship</option><option value="RELOCATION">Переезд</option><option value="REMOTE_PREFERENCE">Формат работы</option><option value="NOTICE_PERIOD">Notice period</option><option value="START_DATE">Дата выхода</option><option value="YEARS_OF_EXPERIENCE">Опыт в годах</option><option value="BACKGROUND_CHECK">Background check</option><option value="REFERENCES">Рекомендации</option>
+            </select>
+            <button class="button secondary" type="submit">Добавить ответ</button>
+          </form>
+        </article>
+      </div>
       <article class="card application-card">
         <div class="application-start">
           <label><span>Ссылка на форму отклика</span><input id="application-url" type="url" placeholder="https://jobs.example.com/apply/…"></label>
           <button id="prepare-application" class="button primary" type="button" disabled>Подготовить отклик</button>
           <button id="start-browser" class="button secondary hidden" type="button">Открыть и заполнить форму</button>
+          <button id="record-manual-submission" class="button text hidden" type="button">Я отправил вручную</button>
         </div>
         <div id="application-status" class="empty-state">Сначала создайте вариант резюме под вакансию.</div>
+        <section id="submit-review" class="submit-review hidden"></section>
         <div id="approval-list" class="approval-list"></div>
+        <section id="browser-workflow" class="browser-workflow hidden" aria-live="polite">
+          <div class="browser-heading">
+            <div><p class="eyebrow">Browser session</p><h3>Ход заполнения формы</h3></div>
+            <button id="refresh-browser-state" class="button text" type="button">Обновить состояние</button>
+          </div>
+          <div id="browser-session-summary"></div>
+          <div id="browser-session-actions" class="browser-session-actions"></div>
+          <div id="browser-field-progress"></div>
+          <details class="browser-technical"><summary>Журнал и диагностика без персональных значений</summary><div id="browser-audit"></div><div id="browser-diagnostics"></div></details>
+        </section>
       </article>
     </section>
   </main>
 
+  <dialog id="resume-edit-dialog" class="edit-dialog">
+    <form id="resume-edit-form">
+      <div class="dialog-heading">
+        <div><p class="eyebrow">Проверка резюме</p><h3 id="resume-edit-title">Исправить элемент</h3></div>
+        <button id="close-resume-edit" class="dialog-close" type="button" aria-label="Закрыть">×</button>
+      </div>
+      <div id="resume-edit-fields" class="form-grid"></div>
+      <div class="dialog-actions">
+        <button id="cancel-resume-edit" class="button text" type="button">Отмена</button>
+        <button class="button primary" type="submit">Сохранить исправление</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="manual-submission-dialog" class="edit-dialog">
+    <form id="manual-submission-form">
+      <div class="dialog-heading">
+        <div><p class="eyebrow">Фиксация результата</p><h3>Я уже отправил отклик вручную</h3></div>
+        <button id="close-manual-submission" class="dialog-close" type="button" aria-label="Закрыть">×</button>
+      </div>
+      <p class="review-note">Это действие только сохранит результат в истории. Приложение не будет повторно нажимать Submit.</p>
+      <div class="form-grid">
+        <label><span>Дата и время отправки</span><input name="submittedAt" type="datetime-local" required></label>
+        <label><span>Confirmation / reference</span><input name="reference" required maxlength="500" placeholder="Номер, URL или текст подтверждения"></label>
+        <label class="full"><span>Заметка</span><textarea name="note" rows="3" maxlength="2000" placeholder="Необязательно"></textarea></label>
+        <label class="full checkbox-line"><input name="confirmed" type="checkbox" required><span>Подтверждаю, что форма действительно была отправлена и данные финального review верны</span></label>
+      </div>
+      <div class="dialog-actions"><button id="cancel-manual-submission" class="button text" type="button">Отмена</button><button class="button primary" type="submit">Сохранить как отправленный</button></div>
+    </form>
+  </dialog>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="/app.js" defer></script>
 </body>

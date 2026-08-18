@@ -62,6 +62,7 @@ class TailorResumeUseCaseTest {
         assertEquals(4, variant.baseImportVersion)
         assertEquals(CURRENT_TEMPLATE_ID, variant.templateId)
         assertEquals(CURRENT_TEMPLATE_VERSION, variant.templateVersion)
+        assertNull(variant.reviewedAt)
         assertEquals(
             listOf("ach-rejected" to OmissionReason.NOT_CONFIRMED, "ach-office" to OmissionReason.NOT_SELECTED),
             variant.plan.omissions.map { it.elementId to it.reason }.sortedBy { it.second.name },
@@ -90,6 +91,24 @@ class TailorResumeUseCaseTest {
 
         assertThrows<InvalidTailoringPlanException> { useCase.execute(profileId, vacancyId) }
         verify(exactly = 0) { variants.save(any()) }
+    }
+
+    @Test
+    fun `records an idempotent review approval for the owning profile`() {
+        var saved: ResumeVariantEntity? = null
+        val useCase = useCase { TailoringPlan() }
+        stubDependencies()
+        every { variants.save(any()) } answers {
+            firstArg<ResumeVariantEntity>().apply { version = 7 }.also { saved = it }
+        }
+        val created = useCase.execute(profileId, vacancyId)
+        every { variants.findByVariantId(created.variantId) } answers { saved }
+
+        val first = useCase.approveReview(profileId, created.variantId)
+        val second = useCase.approveReview(profileId, created.variantId)
+
+        assertEquals(Instant.now(clock), first.reviewedAt)
+        assertEquals(first.reviewedAt, second.reviewedAt)
     }
 
     private fun useCase(tailor: (TailoringRequest) -> TailoringPlan) = TailorResumeUseCase(

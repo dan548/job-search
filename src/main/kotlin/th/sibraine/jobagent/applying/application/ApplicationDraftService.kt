@@ -85,6 +85,12 @@ class ApplicationDraftService(
                 "Resume variant belongs to another vacancy",
             )
         }
+        if (variant.reviewedAt == null) {
+            throw ConflictException(
+                "RESUME_VARIANT_REVIEW_REQUIRED",
+                "Resume variant must be reviewed and approved before creating an application draft",
+            )
+        }
         val now = Instant.now(clock)
         val entity = drafts.save(
             ApplicationDraftEntity(
@@ -319,6 +325,49 @@ class ApplicationDraftService(
             reference = receipt.reference,
             note = receipt.note,
             submittedAt = now,
+        )
+        entity.updatedAt = now
+        return view(entity)
+    }
+
+    /** Records an external submission without invoking the configured browser/API submitter. */
+    @Transactional
+    fun recordManualSubmission(
+        draftId: UUID,
+        submittedAt: Instant,
+        reference: String,
+        note: String? = null,
+    ): ApplicationDraftView {
+        val entity = find(draftId)
+        if (entity.status == ApplicationStatus.SUBMITTED) return view(entity)
+        if (entity.status != ApplicationStatus.READY_TO_SUBMIT) {
+            throw ConflictException(
+                "APPLICATION_NOT_READY",
+                "Application is ${entity.status} and cannot be recorded as submitted",
+            )
+        }
+        val approval = approvals.findByDraftIdOrderByCreatedAtAsc(entity.draftId).lastOrNull {
+            it.type == ApprovalType.SUBMIT &&
+                it.status == ApprovalStatus.APPROVED &&
+                it.stateFingerprint == entity.stateFingerprint
+        } ?: throw ConflictException(
+            "APPLICATION_SUBMIT_NOT_APPROVED",
+            "Recording a manual submission requires approval of the current application state",
+        )
+        val now = Instant.now(clock)
+        require(reference.isNotBlank()) { "Manual submission reference must not be blank" }
+        require(reference.length <= 500) { "Manual submission reference must not exceed 500 characters" }
+        require(note == null || note.length <= 2_000) { "Manual submission note must not exceed 2000 characters" }
+        require(!submittedAt.isBefore(entity.createdAt)) { "Manual submission date must not be before the draft was created" }
+        require(!submittedAt.isAfter(now.plusSeconds(300))) { "Manual submission date must not be in the future" }
+
+        entity.status = stateMachine.require(entity.status, ApplicationStatus.SUBMITTED)
+        entity.submission = ApplicationSubmission(
+            mode = SubmissionMode.MANUAL,
+            approvalId = approval.approvalId,
+            reference = reference.trim(),
+            note = note?.trim()?.takeIf(String::isNotEmpty),
+            submittedAt = submittedAt,
         )
         entity.updatedAt = now
         return view(entity)

@@ -97,6 +97,17 @@ class TailorResumeUseCase(
         ?.toDomain()
         ?: throw NotFoundException("RESUME_VARIANT_NOT_FOUND", "Resume variant not found")
 
+    @Transactional
+    fun approveReview(candidateProfileId: UUID, variantId: UUID): ResumeVariant {
+        val entity = variants.findByVariantId(variantId)
+            ?: throw NotFoundException("RESUME_VARIANT_NOT_FOUND", "Resume variant not found")
+        if (entity.candidateProfileId != candidateProfileId) {
+            throw NotFoundException("RESUME_VARIANT_NOT_FOUND", "Resume variant not found")
+        }
+        if (entity.reviewedAt == null) entity.reviewedAt = Instant.now(clock)
+        return entity.toDomain()
+    }
+
     private fun ensureSelected(plan: TailoringPlan, resume: th.sibraine.jobagent.candidate.domain.StructuredResume): TailoringPlan {
         val plannedExperiences = plan.experiences.map { it.sourceElementId }.toSet()
         val missingExperiences = resume.experiences.filter { it.elementId !in plannedExperiences }.map { experience ->
@@ -112,8 +123,22 @@ class TailorResumeUseCase(
             )
         }
         val selectedSkillIds = resume.skills.map { it.elementId }
+        val plannedProjects = plan.projects.map { it.sourceElementId }.toSet()
+        val missingProjects = resume.projects.filter { it.elementId !in plannedProjects }.map { project ->
+            TailoredProject(
+                project.elementId,
+                project.achievements.map { achievement ->
+                    TailoredText(
+                        achievement.text,
+                        evidence = listOf(EvidenceRef(EvidenceKind.RESUME_ELEMENT, achievement.elementId)),
+                        sourceElementId = achievement.elementId,
+                    )
+                },
+            )
+        }
         return plan.copy(
             experiences = plan.experiences + missingExperiences,
+            projects = plan.projects + missingProjects,
             skillElementIds = (plan.skillElementIds.filter { it in selectedSkillIds } + selectedSkillIds).distinct(),
         )
     }

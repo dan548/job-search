@@ -8,10 +8,13 @@ import th.sibraine.jobagent.candidate.infrastructure.DeterministicResumeDecompos
 import th.sibraine.jobagent.candidate.infrastructure.ResumeImportEntity
 import th.sibraine.jobagent.candidate.infrastructure.ResumeImportJpaRepository
 import th.sibraine.jobagent.shared.ApiExceptionHandler
+import th.sibraine.jobagent.shared.NotFoundException
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import io.mockk.every
 import io.mockk.mockk
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.assertThrows
 import org.apache.pdfbox.pdmodel.PDDocument
 import org.apache.pdfbox.pdmodel.PDPage
 import org.apache.pdfbox.pdmodel.PDPageContentStream
@@ -20,6 +23,7 @@ import org.apache.pdfbox.pdmodel.font.Standard14Fonts
 import org.junit.jupiter.api.Test
 import org.springframework.http.MediaType
 import org.springframework.mock.web.MockMultipartFile
+import org.springframework.aop.framework.ProxyFactory
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.get
 import org.springframework.test.web.servlet.multipart
@@ -29,21 +33,40 @@ import java.io.ByteArrayOutputStream
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
+import java.util.UUID
 
 class ResumeImportApiTest {
     private val imports = mockk<ResumeImportJpaRepository>()
+    private val profiles = mockk<CandidateProfileService>(relaxed = true)
     private val objectMapper: ObjectMapper = jacksonObjectMapper().findAndRegisterModules()
     private val service = ResumeImportService(
         PdfBoxResumeDocumentParser(),
         DeterministicResumeDecomposer(),
         imports,
         StructuredResumeValidator(),
-        mockk<CandidateProfileService>(relaxed = true),
+        profiles,
         Clock.fixed(Instant.EPOCH, ZoneOffset.UTC),
     )
     private val mvc: MockMvc = MockMvcBuilders.standaloneSetup(ResumeImportController(service))
         .setControllerAdvice(ApiExceptionHandler())
         .build()
+
+    @Test
+    fun `latest confirmed resolves active profile through Spring class proxy`() {
+        val profileId = UUID.randomUUID()
+        every { profiles.profileId } returns profileId
+        every {
+            imports.findFirstByCandidateProfileIdAndStatusOrderByVersionDesc(
+                profileId,
+                any(),
+            )
+        } returns null
+        val proxied = ProxyFactory(service).apply { isProxyTargetClass = true }.proxy as ResumeImportService
+
+        val error = assertThrows<NotFoundException> { proxied.latestConfirmed() }
+
+        assertEquals("CONFIRMED_RESUME_NOT_FOUND", error.code)
+    }
 
     @Test
     fun `creates preview and confirms edited structured resume`() {

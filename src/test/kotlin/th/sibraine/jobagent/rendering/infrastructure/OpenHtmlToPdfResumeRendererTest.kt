@@ -84,6 +84,23 @@ class OpenHtmlToPdfResumeRendererTest {
         assertEquals(listOf("Алексей Иванов", "Senior Backend Engineer", "Open to remote"), html.expectedTextBlocks.take(3))
     }
 
+    @Test
+    fun `renders photo and keeps work projects inside their experience`() {
+        val resume = sampleResume().copy(
+            photo = ResumePhoto("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="),
+            projects = sampleResume().projects.map { it.copy(experienceElementId = "experience") },
+        )
+
+        val html = htmlRenderer.render(resume)
+        val rendered = renderer(maxPages = 3).render(variant(resume))
+
+        assertTrue("class=\"photo\"" in html.html)
+        assertTrue("class=\"nested-project\"" in html.html)
+        assertTrue("<h2>Projects</h2>" !in html.html)
+        assertTrue(html.html.indexOf("Evidence-based Job Agent") < html.html.indexOf("<h2>Education</h2>"))
+        assertEquals(1, rendered.pageCount)
+    }
+
     private fun renderer(maxPages: Int) = OpenHtmlToPdfResumeRenderer(htmlRenderer, RenderedPdfValidator(maxPages))
 
     private fun variant(resume: StructuredResume) = ResumeVariant(

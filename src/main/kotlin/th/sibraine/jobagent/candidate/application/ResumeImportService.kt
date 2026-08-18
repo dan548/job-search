@@ -109,16 +109,16 @@ class ResumeImportService(
     }
 
     @Transactional(readOnly = true)
-    fun latestConfirmed(profileId: UUID = profiles.profileId): ResumeImportVersion = imports
+    fun latestConfirmed(): ResumeImportVersion = imports
         .findFirstByCandidateProfileIdAndStatusOrderByVersionDesc(
-            profileId,
+            profiles.profileId,
             ResumeImportStatus.CONFIRMED,
         )
         ?.toDomain()
         ?: throw NotFoundException("CONFIRMED_RESUME_NOT_FOUND", "Confirmed structured resume not found")
 
     @Transactional(readOnly = true)
-    fun latestConfirmedOrNull(profileId: UUID = profiles.profileId): ResumeImportVersion? = imports
+    fun latestConfirmedOrNull(profileId: UUID): ResumeImportVersion? = imports
         .findFirstByCandidateProfileIdAndStatusOrderByVersionDesc(profileId, ResumeImportStatus.CONFIRMED)
         ?.toDomain()
 

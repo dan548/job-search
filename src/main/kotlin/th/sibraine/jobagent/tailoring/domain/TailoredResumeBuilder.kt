@@ -13,6 +13,7 @@ class TailoredResumeBuilder {
         val evidence = EvidenceIndex(resume, profile)
         val skills = plan.skillElementIds.mapNotNull { id -> resume.skills.firstOrNull { it.elementId == id } }
         val skillIds = skills.map { it.elementId }.toSet()
+        val selectedExperienceIds = plan.experiences.map { it.sourceElementId }.toSet()
         return StructuredResume(
             identity = resume.identity,
             summary = plan.summary?.let { tailored -> textElement(resume.summary, tailored, evidence) },
@@ -27,7 +28,10 @@ class TailoredResumeBuilder {
                 }
             },
             projects = plan.projects.mapNotNull { tailored ->
-                resume.projects.firstOrNull { it.elementId == tailored.sourceElementId }?.let { source ->
+                resume.projects.firstOrNull {
+                    it.elementId == tailored.sourceElementId &&
+                        (it.experienceElementId == null || it.experienceElementId in selectedExperienceIds)
+                }?.let { source ->
                     source.copy(
                         achievements = tailored.achievements.map { achievement ->
                             textElement(source.achievements.bySourceOf(achievement), achievement, evidence)
@@ -40,6 +44,7 @@ class TailoredResumeBuilder {
             certifications = resume.certifications,
             languages = resume.languages,
             skills = skills,
+            photo = resume.photo,
         )
     }
 

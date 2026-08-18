@@ -87,6 +87,7 @@ class OpenAiResumeDecomposer(
             A source block must directly support the complete item that cites it.
             Confidence must express extraction certainty from 0 to 1, not candidate quality.
             Keep achievements as separate factual bullets. Normalize dates only when explicitly stated.
+            When a project is explicitly part of a work experience, set experienceCompany to that employer's exact company name.
         """
 
         private val nullableString = mapOf("type" to listOf("string", "null"))
@@ -147,6 +148,7 @@ class OpenAiResumeDecomposer(
             "url" to nullableString,
             "achievements" to arrayOf(textSchema),
             "skillNames" to stringArray,
+            "experienceCompany" to nullableString,
         )
         private val educationSchema = sourced(
             "institution" to mapOf("type" to "string"),
@@ -245,6 +247,7 @@ internal data class DecomposedProject(
     val url: String?,
     val achievements: List<DecomposedText>,
     val skillNames: List<String>,
+    val experienceCompany: String? = null,
     override val sourceBlockIds: List<String>,
     override val confidence: Double,
 ) : SourcedDecomposition
@@ -329,12 +332,23 @@ internal class ResumeDecompositionMapper(blocks: List<ResumeTextBlock>) {
             },
             projects = value.projects.distinctBy { normalize(it.name) }.map { project ->
                 val projectId = stableId("project", project.name, project.sourceBlockIds)
+                val relatedExperience = project.experienceCompany?.let { company ->
+                    value.experiences.firstOrNull { normalize(it.company) == normalize(company) }
+                }
+                val relatedExperienceId = relatedExperience?.let { experience ->
+                    stableId(
+                        "experience",
+                        "${experience.company}|${experience.role}|${experience.startDate}",
+                        experience.sourceBlockIds,
+                    )
+                }
                 ResumeProject(
                     projectId, project.name.trim(),
                     project.description?.trim()?.ifBlank { null }, project.url?.trim()?.ifBlank { null },
                     project.achievements.distinctBy { achievement -> normalize(achievement.text) }
                         .map { achievement -> textElement("project-achievement-$projectId", achievement) },
                     project.skillNames.mapNotNull { name -> skillIds[normalize(name)] }.distinct(), metadata(project),
+                    experienceElementId = relatedExperienceId,
                 )
             },
             education = value.education.distinctBy {

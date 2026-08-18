@@ -97,4 +97,6 @@ data class ResumeVariant(
     val resume: StructuredResume,
     val diff: List<ResumeDiffChange>,
     val createdAt: Instant,
+    val reviewedAt: Instant? = null,
+    val coverLetter: CoverLetter? = null,
 )

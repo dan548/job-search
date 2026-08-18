@@ -1,4 +1,4 @@
-const state = { profile: null, identities: [], preview: null, vacancies: [], vacancy: null, analysis: null, variant: null, draft: null, resumeSelection: null, vacancySelection: 0 };
+const state = { profile: null, identities: [], preview: null, vacancies: [], vacancy: null, analysis: null, variant: null, draft: null, resumeSelection: null, resumePhotoDataUri: null, settings: null, catalog: [], browserSession: null, browserAudit: [], browserDiagnostics: [], vacancySelection: 0 };
 
 const $ = (selector) => document.querySelector(selector);
 const escapeHtml = (value = "") => String(value).replace(/[&<>'"]/g, (char) => ({
@@ -111,26 +111,37 @@ function renderProfileEditor() {
 
 function reviewElements(resume) {
   const result = [];
-  const add = (section, element, title, detail = "") => element && result.push({ section, element, title, detail });
-  add("Личность", resume.identity, resume.identity?.fullName, resume.identity?.headline);
-  add("Профессиональное резюме", resume.summary, resume.summary?.text);
-  (resume.contacts || []).forEach((item) => add("Контакты", item, item.value, item.type));
+  const add = (section, kind, element, title, detail = "") => element && result.push({ section, kind, element, title, detail });
+  add("Личность", "identity", resume.identity, resume.identity?.fullName, resume.identity?.headline);
+  add("Профессиональное резюме", "text", resume.summary, resume.summary?.text);
+  (resume.contacts || []).forEach((item) => add("Контакты", "contact", item, item.value, item.type));
   (resume.experiences || []).forEach((item) => {
-    add("Опыт", item, item.role, item.company);
-    (item.achievements || []).forEach((achievement) => add("Достижения", achievement, achievement.text, `${item.role} · ${item.company}`));
+    add("Опыт", "experience", item, item.role, item.company);
+    (item.achievements || []).forEach((achievement) => add("Достижения", "text", achievement, achievement.text, `${item.role} · ${item.company}`));
   });
   (resume.projects || []).forEach((item) => {
-    add("Проекты", item, item.name, item.description);
-    (item.achievements || []).forEach((achievement) => add("Достижения проектов", achievement, achievement.text, item.name));
+    add("Проекты", "project", item, item.name, item.description);
+    (item.achievements || []).forEach((achievement) => add("Достижения проектов", "text", achievement, achievement.text, item.name));
   });
-  (resume.education || []).forEach((item) => add("Образование", item, item.institution, [item.degree, item.fieldOfStudy].filter(Boolean).join(" · ")));
-  (resume.certifications || []).forEach((item) => add("Сертификаты", item, item.name, item.issuer));
-  (resume.languages || []).forEach((item) => add("Языки", item, item.name, item.proficiency));
-  (resume.skills || []).forEach((item) => add("Навыки", item, item.name, item.category));
+  (resume.education || []).forEach((item) => add("Образование", "education", item, item.institution, [item.degree, item.fieldOfStudy].filter(Boolean).join(" · ")));
+  (resume.certifications || []).forEach((item) => add("Сертификаты", "certification", item, item.name, item.issuer));
+  (resume.languages || []).forEach((item) => add("Языки", "language", item, item.name, item.proficiency));
+  (resume.skills || []).forEach((item) => add("Навыки", "skill", item, item.name, item.category));
   return result;
 }
 
-function renderResumeReview() {
+function provenanceMarkup(element) {
+  const provenance = element.metadata?.provenance;
+  if (!provenance) return '<div class="provenance">Источник не указан распознавателем</div>';
+  const box = provenance.boundingBox;
+  const location = [
+    provenance.pageNumber ? `страница ${provenance.pageNumber}` : null,
+    box ? `x ${box.x.toFixed(1)}, y ${box.y.toFixed(1)}, ${box.width.toFixed(1)} × ${box.height.toFixed(1)}` : null
+  ].filter(Boolean).join(" · ");
+  return `<details class="provenance"><summary>Источник${location ? ` · ${escapeHtml(location)}` : ""}</summary><p>${escapeHtml(provenance.sourceText)}</p></details>`;
+}
+
+function renderResumeReview(scroll = true) {
   const panel = $("#resume-review");
   const list = $("#review-list");
   const items = reviewElements(state.preview.structuredResume);
@@ -138,12 +149,15 @@ function renderResumeReview() {
   list.innerHTML = items.map(({ section, element, title, detail }) => {
     const heading = section !== lastSection ? `<div class="review-section">${escapeHtml(section)}</div>` : "";
     lastSection = section;
-    return `${heading}<label class="review-item"><input type="checkbox" data-element-id="${escapeHtml(element.elementId)}"><span><strong>${escapeHtml(title)}</strong>${detail ? `<small>${escapeHtml(detail)}</small>` : ""}</span></label>`;
+    const inputId = `review-${element.elementId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+    const checked = element.metadata?.reviewStatus === "CONFIRMED" ? " checked" : "";
+    return `${heading}<div class="review-item"><input id="${escapeHtml(inputId)}" type="checkbox" data-element-id="${escapeHtml(element.elementId)}"${checked}><div class="review-content"><label for="${escapeHtml(inputId)}"><strong>${escapeHtml(title)}</strong>${detail ? `<small>${escapeHtml(detail)}</small>` : ""}</label>${provenanceMarkup(element)}</div><button class="review-edit" type="button" data-edit-resume-element="${escapeHtml(element.elementId)}">Исправить</button></div>`;
   }).join("") || '<div class="empty-state full">Распознанных элементов нет. Проверьте настройки AI/OCR или загрузите другой PDF.</div>';
   panel.classList.remove("hidden");
   panel.querySelectorAll("input[type=checkbox]").forEach((input) => input.addEventListener("change", updateReviewCount));
+  panel.querySelectorAll("[data-edit-resume-element]").forEach((button) => button.addEventListener("click", () => editResumeElement(button.dataset.editResumeElement)));
   updateReviewCount();
-  panel.scrollIntoView({ behavior: "smooth", block: "start" });
+  if (scroll) panel.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function updateReviewCount() {
@@ -159,6 +173,71 @@ function applyReviewDecisions(resume) {
     element.metadata.reviewStatus = selected.has(element.elementId) ? "CONFIRMED" : "REJECTED";
   });
   return resume;
+}
+
+const editField = (name, label, options = {}) => ({ name, label, type: "text", ...options });
+
+function resumeEditFields(item) {
+  const fields = {
+    identity: [editField("fullName", "Имя", { required: true }), editField("headline", "Позиционирование")],
+    text: [editField("text", "Текст", { type: "textarea", required: true, full: true })],
+    contact: [editField("type", "Тип", { type: "select", options: ["EMAIL", "PHONE", "LOCATION", "WEBSITE", "LINKEDIN", "GITHUB", "OTHER"] }), editField("value", "Значение", { required: true }), editField("label", "Подпись")],
+    experience: [editField("company", "Компания", { required: true }), editField("role", "Роль", { required: true }), editField("location", "Локация"), editField("startDate", "Начало", { type: "month" }), editField("endDate", "Окончание", { type: "month" }), editField("current", "Работаю сейчас", { type: "checkbox", full: true }), editField("description", "Описание", { type: "textarea", full: true }), editField("technologies", "Технологии через запятую", { full: true })],
+    project: [editField("name", "Название", { required: true }), editField("url", "Ссылка", { type: "url" }), editField("description", "Описание", { type: "textarea", full: true })],
+    education: [editField("institution", "Учебное заведение", { required: true }), editField("degree", "Степень"), editField("fieldOfStudy", "Специальность"), editField("startDate", "Начало", { type: "month" }), editField("endDate", "Окончание", { type: "month" }), editField("description", "Описание", { type: "textarea", full: true })],
+    certification: [editField("name", "Сертификат", { required: true }), editField("issuer", "Организация"), editField("issuedAt", "Дата выдачи", { type: "month" }), editField("expiresAt", "Действует до", { type: "month" }), editField("credentialUrl", "Ссылка", { type: "url", full: true })],
+    language: [editField("name", "Язык", { required: true }), editField("proficiency", "Уровень")],
+    skill: [editField("name", "Навык", { required: true }), editField("category", "Категория")]
+  };
+  return fields[item.kind] || [];
+}
+
+function editValue(element, field) {
+  const value = element[field.name];
+  if (field.type === "month") return resumeDateInput(value);
+  if (field.name === "technologies") return (value || []).join(", ");
+  return value ?? "";
+}
+
+function editFieldMarkup(element, field) {
+  const full = field.full ? "full" : "";
+  if (field.type === "checkbox") return `<label class="${full} checkbox-line"><input name="${field.name}" type="checkbox"${element[field.name] ? " checked" : ""}><span>${escapeHtml(field.label)}</span></label>`;
+  if (field.type === "select") return `<label class="${full}"><span>${escapeHtml(field.label)}</span><select name="${field.name}">${field.options.map((option) => `<option value="${option}"${element[field.name] === option ? " selected" : ""}>${option}</option>`).join("")}</select></label>`;
+  const required = field.required ? " required" : "";
+  const value = editValue(element, field);
+  if (field.type === "textarea") return `<label class="${full}"><span>${escapeHtml(field.label)}</span><textarea name="${field.name}" rows="4"${required}>${escapeHtml(value)}</textarea></label>`;
+  return `<label class="${full}"><span>${escapeHtml(field.label)}</span><input name="${field.name}" type="${field.type}" value="${escapeHtml(value)}"${required}></label>`;
+}
+
+function editResumeElement(elementId) {
+  applyReviewDecisions(state.preview.structuredResume);
+  const item = reviewElements(state.preview.structuredResume).find(({ element }) => element.elementId === elementId);
+  if (!item) return;
+  const form = $("#resume-edit-form");
+  form.dataset.elementId = elementId;
+  $("#resume-edit-title").textContent = item.section;
+  $("#resume-edit-fields").innerHTML = resumeEditFields(item).map((field) => editFieldMarkup(item.element, field)).join("");
+  $("#resume-edit-dialog").showModal();
+}
+
+function saveResumeElement(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const item = reviewElements(state.preview.structuredResume).find(({ element }) => element.elementId === form.dataset.elementId);
+  if (!item) return;
+  const values = Object.fromEntries(new FormData(form));
+  resumeEditFields(item).forEach((field) => {
+    if (field.type === "checkbox") item.element[field.name] = form.elements[field.name].checked;
+    else if (field.type === "month") item.element[field.name] = parseResumeDate(values[field.name]);
+    else if (field.name === "technologies") item.element[field.name] = values[field.name].split(",").map((value) => value.trim()).filter(Boolean);
+    else item.element[field.name] = values[field.name]?.trim() || null;
+  });
+  if (item.kind === "experience" && item.element.current) item.element.endDate = null;
+  item.element.metadata ||= {};
+  item.element.metadata.reviewStatus = "CONFIRMED";
+  $("#resume-edit-dialog").close();
+  renderResumeReview(false);
+  toast("Исправление сохранено и отмечено как подтверждённое");
 }
 
 function renderVacancies() {
@@ -177,6 +256,45 @@ function renderVacancies() {
 
 function recommendationLabel(value) {
   return ({ PRIORITY: "Приоритетный отклик", APPLY: "Стоит откликнуться", MAYBE: "Нужна оценка", REJECT: "Лучше пропустить" })[value] || value;
+}
+
+function displayResumeDate(value) {
+  if (!value?.year) return "";
+  return value.month ? `${String(value.month).padStart(2, "0")}.${value.year}` : String(value.year);
+}
+
+function resumePreviewMarkup(resume) {
+  const blocks = [];
+  const section = (title, content) => content && blocks.push(`<section class="preview-section"><h4>${escapeHtml(title)}</h4>${content}</section>`);
+  if (resume.identity) section("Заголовок", `<h3>${escapeHtml(resume.identity.fullName)}</h3>${resume.identity.headline ? `<p>${escapeHtml(resume.identity.headline)}</p>` : ""}`);
+  if (resume.summary) section("Профессиональное резюме", `<p>${escapeHtml(resume.summary.text)}</p>`);
+  section("Контакты", (resume.contacts || []).map((item) => `<p><b>${escapeHtml(item.type)}</b> · ${escapeHtml(item.value)}</p>`).join(""));
+  section("Опыт работы", (resume.experiences || []).map((item) => {
+    const dates = [displayResumeDate(item.startDate), item.current ? "сейчас" : displayResumeDate(item.endDate)].filter(Boolean).join(" — ");
+    return `<article><h5>${escapeHtml(item.role)} · ${escapeHtml(item.company)}</h5><small>${escapeHtml([dates, item.location].filter(Boolean).join(" · "))}</small>${item.description ? `<p>${escapeHtml(item.description)}</p>` : ""}<ul>${(item.achievements || []).map((achievement) => `<li>${escapeHtml(achievement.text)}</li>`).join("")}</ul></article>`;
+  }).join(""));
+  section("Проекты", (resume.projects || []).map((item) => `<article><h5>${escapeHtml(item.name)}</h5>${item.description ? `<p>${escapeHtml(item.description)}</p>` : ""}<ul>${(item.achievements || []).map((achievement) => `<li>${escapeHtml(achievement.text)}</li>`).join("")}</ul></article>`).join(""));
+  section("Образование", (resume.education || []).map((item) => `<p><b>${escapeHtml(item.institution)}</b>${item.degree || item.fieldOfStudy ? ` · ${escapeHtml([item.degree, item.fieldOfStudy].filter(Boolean).join(", "))}` : ""}</p>`).join(""));
+  section("Сертификаты", (resume.certifications || []).map((item) => `<p><b>${escapeHtml(item.name)}</b>${item.issuer ? ` · ${escapeHtml(item.issuer)}` : ""}</p>`).join(""));
+  section("Языки", (resume.languages || []).map((item) => `<p>${escapeHtml(item.name)}${item.proficiency ? ` · ${escapeHtml(item.proficiency)}` : ""}</p>`).join(""));
+  section("Навыки", (resume.skills || []).map((item) => `<span class="skill">${escapeHtml(item.name)}</span>`).join(" "));
+  return blocks.join("") || '<div class="empty-state compact">В варианте нет содержимого.</div>';
+}
+
+function variantDiffMarkup(diff) {
+  const changeLabel = { ADDED: "Добавлено", REMOVED: "Исключено", MODIFIED: "Переформулировано" };
+  return (diff || []).map((change) => `<article class="diff-item diff-${change.changeType}"><div class="diff-heading"><b>${escapeHtml(changeLabel[change.changeType] || change.changeType)}</b><small>${escapeHtml(change.section)}</small></div>${change.previousText != null ? `<div><span>Было</span><p>${escapeHtml(change.previousText)}</p></div>` : ""}${change.currentText != null ? `<div><span>Стало</span><p>${escapeHtml(change.currentText)}</p></div>` : ""}</article>`).join("") || '<div class="empty-state compact">Текст не изменён — использована подтверждённая версия.</div>';
+}
+
+function coverLetterMarkup(coverLetter) {
+  const generated = coverLetter
+    ? `<textarea id="cover-letter-text" rows="12" readonly>${escapeHtml(coverLetter.text)}</textarea>
+       <div class="cover-letter-meta"><small>Создано ${escapeHtml(new Date(coverLetter.generatedAt).toLocaleString("ru-RU"))}</small><button id="copy-cover-letter" class="button secondary" type="button">Копировать текст</button></div>`
+    : '<div class="empty-state compact">Сгенерируйте короткое письмо на основе этой версии резюме и выбранной вакансии.</div>';
+  return `<section class="cover-letter-panel">
+    <div class="subsection-title"><div><h3>Cover letter</h3><small>Только факты из подготовленного резюме</small></div><button id="generate-cover-letter" class="button primary" type="button">${coverLetter ? "Сгенерировать заново" : "Сгенерировать текст"}</button></div>
+    ${generated}
+  </section>`;
 }
 
 function renderAnalysis() {
@@ -227,17 +345,74 @@ function renderVariant() {
     return;
   }
   $("#tailor-state").className = "pill";
-  $("#tailor-state").textContent = "Резюме готово";
-  $("#tailor-title").textContent = `Резюме для ${state.vacancy?.company || "выбранной вакансии"} готово`;
-  $("#tailor-copy").textContent = "Версия собрана из подтверждённых сведений и настроена под требования выбранной роли.";
+  $("#tailor-state").className = state.variant.reviewedAt ? "pill" : "pill orange";
+  $("#tailor-state").textContent = state.variant.reviewedAt ? "Проверено" : "Нужна проверка";
+  $("#tailor-title").textContent = `Проверьте резюме для ${state.vacancy?.company || "выбранной вакансии"}`;
+  $("#tailor-copy").textContent = "Просмотрите итоговый текст, все изменения и пробелы. Без вашего подтверждения версия не попадёт в отклик.";
   button.textContent = "Пересобрать резюме";
   download.href = `/api/v1/resume-variants/${state.variant.variantId}/pdf`;
   download.classList.remove("hidden");
   const plan = state.variant.plan;
-  details.innerHTML = `<div class="variant-stats"><span><b>${plan.skillElementIds?.length || 0}</b> навыков выбрано</span><span><b>${plan.gaps?.length || 0}</b> пробелов отмечено</span><span><b>${plan.questions?.length || 0}</b> вопросов к вам</span><span><b>${state.variant.diff?.length || 0}</b> изменений</span></div>`;
+  details.innerHTML = `<div class="variant-stats"><span><b>${plan.skillElementIds?.length || 0}</b> навыков выбрано</span><span><b>${plan.gaps?.length || 0}</b> пробелов отмечено</span><span><b>${plan.questions?.length || 0}</b> вопросов к вам</span><span><b>${state.variant.diff?.length || 0}</b> изменений</span></div>
+    <div class="variant-review-grid">
+      <section><div class="subsection-title"><h3>Итоговое резюме</h3><small>Полный текст версии</small></div><div class="resume-preview">${resumePreviewMarkup(state.variant.resume)}</div></section>
+      <section><div class="subsection-title"><h3>Что изменилось</h3><small>Полный diff относительно выбранного подтверждённого содержания</small></div><div class="diff-list">${variantDiffMarkup(state.variant.diff)}</div></section>
+    </div>
+    <div class="variant-risks">
+      <section><h3>Пробелы</h3>${(plan.gaps || []).map((gap) => `<div class="risk-item"><b>${escapeHtml(gap.requirement)}</b><span class="status-${gap.status}">${escapeHtml(gap.status)} · ${escapeHtml(gap.importance)}</span></div>`).join("") || '<div class="empty-state compact">Критичных пробелов не найдено.</div>'}</section>
+      <section><h3>Вопросы к вам</h3>${(plan.questions || []).map((question) => `<div class="risk-item"><b>${escapeHtml(question.question)}</b><small>${escapeHtml(question.requirement)}</small></div>`).join("") || '<div class="empty-state compact">Дополнительных вопросов нет.</div>'}</section>
+    </div>
+    <div class="variant-approval ${state.variant.reviewedAt ? "approved" : ""}">${state.variant.reviewedAt ? `<div><b>Версия подтверждена</b><small>${escapeHtml(new Date(state.variant.reviewedAt).toLocaleString("ru-RU"))}</small></div>` : '<label class="checkbox-line"><input id="variant-review-check" type="checkbox"><span>Я проверил итоговый текст и принимаю показанные AI-переформулировки</span></label><button id="approve-variant" class="button primary" type="button" disabled>Подтвердить версию</button>'}</div>
+    ${coverLetterMarkup(state.variant.coverLetter)}`;
   details.classList.remove("hidden");
-  $("#prepare-application").disabled = false;
+  $("#prepare-application").disabled = !state.variant.reviewedAt;
+  if (!state.variant.reviewedAt) {
+    $("#variant-review-check").addEventListener("change", (event) => $("#approve-variant").disabled = !event.target.checked);
+    $("#approve-variant").addEventListener("click", approveVariantReview);
+  }
+  $("#generate-cover-letter").addEventListener("click", generateCoverLetter);
+  $("#copy-cover-letter")?.addEventListener("click", copyCoverLetter);
   renderResumeSelection();
+}
+
+async function generateCoverLetter() {
+  if (!state.variant) return;
+  const variantId = state.variant.variantId;
+  const button = $("#generate-cover-letter");
+  busy(button, true, "Генерируем…");
+  try {
+    const coverLetter = await request(`/api/v1/resume-variants/${variantId}/cover-letter`, { method: "POST" });
+    if (state.variant?.variantId !== variantId) return;
+    state.variant.coverLetter = coverLetter;
+    renderVariant();
+    toast("Текст cover letter готов");
+  } catch (error) { toast(error.message, true); }
+  finally { busy(button, false); }
+}
+
+async function copyCoverLetter() {
+  const text = state.variant?.coverLetter?.text;
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    toast("Cover letter скопирован");
+  } catch (_) {
+    const field = $("#cover-letter-text");
+    field.focus(); field.select();
+    toast("Текст выделен — скопируйте его вручную");
+  }
+}
+
+async function approveVariantReview() {
+  const button = $("#approve-variant");
+  busy(button, true, "Подтверждаем…");
+  try {
+    state.variant = await request(`/api/v1/resume-variants/${state.variant.variantId}/review-approval`, { method: "POST" });
+    renderVariant();
+    renderDraft();
+    toast("Версия резюме подтверждена — теперь её можно использовать в отклике");
+  } catch (error) { toast(error.message, true); }
+  finally { busy(button, false); }
 }
 
 function renderResumeSelection() {
@@ -246,6 +421,7 @@ function renderResumeSelection() {
   const groups = [
     ["Контакты", "contact", state.resumeSelection.contacts || []],
     ["Опыт работы", "experience", state.resumeSelection.experiences || []],
+    ["Образование", "education", state.resumeSelection.education || []],
     ["Навыки", "skill", state.resumeSelection.skills || []]
   ];
   $("#selection-groups").innerHTML = groups.map(([title, kind, options]) => `
@@ -271,8 +447,35 @@ function selectedResumeContent() {
   return {
     contactElementIds: selected("contact"),
     experienceElementIds: selected("experience"),
-    skillElementIds: selected("skill")
+    educationElementIds: selected("education"),
+    skillElementIds: selected("skill"),
+    photoDataUri: state.resumePhotoDataUri
   };
+}
+
+function clearResumePhoto() {
+  state.resumePhotoDataUri = null;
+  $("#resume-photo").value = "";
+  $("#resume-photo-name").textContent = "Без фото";
+  $("#remove-resume-photo").classList.add("hidden");
+}
+
+function selectResumePhoto(event) {
+  const file = event.target.files?.[0];
+  if (!file) { clearResumePhoto(); return; }
+  if (!["image/jpeg", "image/png"].includes(file.type) || file.size > 2 * 1024 * 1024) {
+    clearResumePhoto();
+    toast("Выберите JPEG или PNG размером до 2 МБ", true);
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    state.resumePhotoDataUri = reader.result;
+    $("#resume-photo-name").textContent = file.name;
+    $("#remove-resume-photo").classList.remove("hidden");
+  };
+  reader.onerror = () => { clearResumePhoto(); toast("Не удалось прочитать фото", true); };
+  reader.readAsDataURL(file);
 }
 
 function statusLabel(status) {
@@ -286,19 +489,25 @@ function renderDraft() {
     panel.className = "empty-state";
     panel.textContent = state.variant ? "Укажите ссылку на форму и подготовьте отклик." : "Сначала создайте вариант резюме под вакансию.";
     approvals.innerHTML = "";
+    $("#start-browser").classList.add("hidden");
+    $("#record-manual-submission").classList.add("hidden");
+    $("#submit-review").classList.add("hidden");
+    renderBrowserWorkflow();
     return;
   }
   const draft = state.draft.draft;
   panel.className = "empty-state";
-  panel.innerHTML = `<strong>${escapeHtml(statusLabel(draft.status))}</strong><br><span>${draft.answers?.length || 0} полей подготовлено · ${state.draft.artifacts?.length || 0} вложений</span>`;
+  panel.innerHTML = `<strong>${escapeHtml(statusLabel(draft.status))}</strong><br><span>${draft.answers?.length || 0} полей подготовлено · ${state.draft.artifacts?.length || 0} вложений</span>${draft.submission ? `<div class="submission-result"><b>${escapeHtml(draft.submission.mode === "MANUAL" ? "Отправлено вручную" : "Отправлено через browser runner")}</b><span>${escapeHtml(new Date(draft.submission.submittedAt).toLocaleString("ru-RU"))}</span>${draft.submission.reference ? `<span>Reference: ${escapeHtml(draft.submission.reference)}</span>` : ""}${draft.submission.note ? `<small>${escapeHtml(draft.submission.note)}</small>` : ""}</div>` : ""}`;
   $("#start-browser").classList.toggle("hidden", draft.status === "SUBMITTED" || draft.status === "FAILED");
+  $("#record-manual-submission").classList.toggle("hidden", draft.status !== "READY_TO_SUBMIT");
+  renderSubmitReview();
   const pending = state.draft.pendingApprovals || [];
   approvals.innerHTML = pending.map((approval) => {
     if (approval.type === "SUBMIT") return `<div class="approval"><div><p>${escapeHtml(approval.question)}</p><small>Будет отправлено только текущее подтверждённое состояние.</small></div><button class="button primary" data-submit-approval="${approval.approvalId}">Подтвердить и отправить</button></div>`;
     const control = approval.options?.length
       ? `<select data-value-for="${approval.approvalId}"><option value="">Выберите ответ</option>${approval.options.map((option) => `<option>${escapeHtml(option)}</option>`).join("")}</select>`
       : `<input data-value-for="${approval.approvalId}" placeholder="Ваш ответ">`;
-    return `<div class="approval"><div><p>${escapeHtml(approval.question)}</p><small>${escapeHtml(approval.reason || "Требуется ответ")}${approval.required ? " · обязательный" : ""}</small></div><div class="approval-controls">${control}<button class="button primary" data-answer-approval="${approval.approvalId}">Сохранить</button></div></div>`;
+    return `<div class="approval"><div><p>${escapeHtml(approval.question)}</p><small>${escapeHtml(approval.reason || "Требуется ответ")}${approval.required ? " · обязательный" : ""}</small></div><div class="approval-controls">${control}<label class="remember-answer"><input type="checkbox" data-save-for="${approval.approvalId}"><span>Запомнить для следующих откликов</span></label><button class="button primary" data-answer-approval="${approval.approvalId}">Сохранить</button></div></div>`;
   }).join("");
   if (draft.status === "READY_TO_SUBMIT" && !pending.some((item) => item.type === "SUBMIT")) {
     approvals.insertAdjacentHTML("beforeend", '<div class="approval"><div><p>Всё готово к финальной проверке</p><small>Сначала создайте отдельное подтверждение отправки.</small></div><button id="request-submit" class="button secondary">Проверить перед отправкой</button></div>');
@@ -306,22 +515,239 @@ function renderDraft() {
   }
   approvals.querySelectorAll("[data-answer-approval]").forEach((button) => button.addEventListener("click", () => answerApproval(button.dataset.answerApproval)));
   approvals.querySelectorAll("[data-submit-approval]").forEach((button) => button.addEventListener("click", () => approveAndSubmit(button.dataset.submitApproval)));
+  renderBrowserWorkflow();
+}
+
+function answerSourceLabel(source) {
+  return ({ RESUME: "подтверждённое резюме", PROFILE: "профиль", SETTINGS: "настройки", CATALOG: "каталог ответов", USER: "ваш ответ", DECLINED_BY_USER: "вы отказались отвечать", ARTIFACT: "вложение" })[source] || source || "нет источника";
+}
+
+function renderSubmitReview() {
+  const panel = $("#submit-review");
+  if (!state.draft) { panel.classList.add("hidden"); return; }
+  const draft = state.draft.draft;
+  const answers = draft.answers || [];
+  const answerByKey = new Map(answers.map((answer) => [answer.fieldKey, answer]));
+  const fieldByKey = new Map((draft.observedFields || []).map((field) => [field.fieldKey, field]));
+  answers.forEach((answer) => { if (!fieldByKey.has(answer.fieldKey)) fieldByKey.set(answer.fieldKey, { fieldKey: answer.fieldKey, label: answer.question, required: false }); });
+  const rows = [...fieldByKey.values()].map((field) => ({ field, answer: answerByKey.get(field.fieldKey) }));
+  const missing = rows.filter(({ field, answer }) => field.required && !answer?.value);
+  const declined = answers.filter((answer) => answer.source === "DECLINED_BY_USER");
+  const pending = (state.draft.pendingApprovals || []).filter((approval) => approval.type === "ANSWER");
+  const validation = state.browserSession?.validationErrors || [];
+  const formUrl = draft.formUrl || state.browserSession?.formUrl || $("#application-url").value.trim();
+  const warnings = [
+    !formUrl ? "Не сохранён URL формы" : null,
+    missing.length ? `${missing.length} обязательных полей без значения` : null,
+    pending.length ? `${pending.length} вопросов ожидают ответа` : null,
+    validation.length ? `${validation.length} ошибок browser-валидации не устранено` : null,
+    declined.length ? `${declined.length} полей сознательно пропущено` : null,
+    !(state.draft.artifacts || []).length ? "Нет вложений" : null,
+  ].filter(Boolean);
+  panel.innerHTML = `<div class="submit-review-heading"><div><p class="eyebrow">Финальная проверка</p><h3>Что будет отправлено</h3></div><span class="pill ${warnings.length ? "orange" : ""}">${warnings.length ? `${warnings.length} предупреждений` : "Без предупреждений"}</span></div>
+    <div class="submit-review-url"><span>URL формы</span><strong>${escapeHtml(formUrl || "Не указан")}</strong></div>
+    <div class="submit-review-fields"><h4>Все поля и источники</h4>${rows.map(({ field, answer }) => `<div class="submit-field ${!answer?.value ? "missing" : ""}"><div><b>${escapeHtml(field.label || field.fieldKey)}</b><small>${escapeHtml(field.fieldKey)}${field.required ? " · обязательное" : ""}</small></div><p>${answer?.value != null ? escapeHtml(answer.value) : "— пропущено —"}</p><span>${escapeHtml(answerSourceLabel(answer?.source))}</span></div>`).join("") || '<div class="empty-state compact">Поля формы ещё не были просканированы.</div>'}</div>
+    <div class="submit-review-bottom"><section><h4>Вложения</h4>${(state.draft.artifacts || []).map((artifact) => `<a class="artifact-row" href="/api/v1/application-drafts/${draft.draftId}/artifacts/${artifact.artifactId}"><b>${escapeHtml(artifact.fileName)}</b><span>${escapeHtml(artifact.type)} · ${Math.ceil(artifact.byteSize / 1024)} КБ</span><small>SHA-256 ${escapeHtml(artifact.sha256.slice(0, 12))}…</small></a>`).join("") || '<div class="empty-state compact">Вложений нет.</div>'}</section><section><h4>Пропуски и предупреждения</h4>${warnings.map((warning) => `<div class="submit-warning">${escapeHtml(warning)}</div>`).join("") || '<div class="empty-state compact">Критичных предупреждений нет.</div>'}</section></div>`;
+  panel.classList.remove("hidden");
+}
+
+function browserStopCopy(session) {
+  const challenges = (session.challenges || []).map((value) => ({ CAPTCHA: "CAPTCHA", OTP: "одноразовый код", REAUTHENTICATION: "повторный вход" })[value] || value).join(", ");
+  return {
+    CHALLENGE: { title: `Нужно пройти: ${challenges || "проверку на странице"}`, action: "Завершите действие в открытом окне браузера, затем нажмите «Продолжить и пересканировать»." },
+    VALIDATION_ERRORS: { title: "Форма отклонила часть значений", action: "Исправьте отмеченные поля в окне браузера или ответьте на вопросы ниже, затем повторите сканирование." },
+    PENDING_ANSWERS: { title: "Нужны ваши ответы", action: "Ответьте на вопросы выше. После сохранения продолжите заполнение формы." },
+    RESCAN_LIMIT: { title: "Форма несколько раз изменилась", action: "Проверьте текущий шаг в браузере и запустите ещё одно пересканирование." },
+    RUNNER_ERROR: { title: "Браузерный runner остановился", action: "Проверьте окно браузера и конфигурацию, затем попробуйте продолжить." },
+    SUBMIT_ERROR: { title: "Не удалось отправить форму", action: "Проверьте ошибки на странице. Повторная отправка потребует актуального подтверждения." }
+  }[session.stopReason] || { title: session.status === "ACTIVE" ? "Доступные поля заполнены" : "Сессия приостановлена", action: "Проверьте открытую форму перед следующим действием." };
+}
+
+function renderBrowserWorkflow() {
+  const panel = $("#browser-workflow");
+  if (!state.draft) { panel.classList.add("hidden"); return; }
+  panel.classList.remove("hidden");
+  const session = state.browserSession;
+  if (!session) {
+    $("#browser-session-summary").innerHTML = '<div class="empty-state compact">Browser session ещё не запускалась. Укажите HTTPS-ссылку выше и откройте форму.</div>';
+    $("#browser-session-actions").innerHTML = "";
+    $("#browser-field-progress").innerHTML = "";
+    $("#browser-audit").innerHTML = "";
+    $("#browser-diagnostics").innerHTML = "";
+    return;
+  }
+  const copy = browserStopCopy(session);
+  const terminal = session.status === "SUBMITTED" || session.status === "CLOSED";
+  $("#application-url").value = session.formUrl || $("#application-url").value;
+  $("#start-browser").classList.add("hidden");
+  $("#browser-session-summary").innerHTML = `<div class="browser-stop browser-stop-${escapeHtml(session.stopReason || session.status)}"><div><span class="pill ${session.status === "ACTIVE" || session.status === "SUBMITTED" ? "" : "orange"}">${escapeHtml(session.status)}</span><h4>${escapeHtml(copy.title)}</h4><p>${escapeHtml(copy.action)}</p></div><dl><div><dt>Текущая страница</dt><dd>${escapeHtml(session.currentUrl)}</dd></div><div><dt>Продолжений</dt><dd>${session.resumeCount || 0}</dd></div><div><dt>После перезапуска</dt><dd>${session.restorable ? "можно восстановить" : "нужно живое окно"}</dd></div>${session.failureCode ? `<div><dt>Код ошибки</dt><dd>${escapeHtml(session.failureCode)}</dd></div>` : ""}</dl></div>`;
+  $("#browser-session-actions").innerHTML = terminal ? "" : '<button id="resume-browser" class="button primary" type="button">Продолжить и пересканировать</button><small>Повторно читается текущий шаг формы; уже применённые поля не заполняются второй раз.</small>';
+  $("#resume-browser")?.addEventListener("click", resumeBrowserRun);
+  const validation = session.validationErrors || [];
+  const fields = session.fieldStates || [];
+  $("#browser-field-progress").innerHTML = `${validation.length ? `<section class="validation-errors"><h4>Ошибки валидации</h4>${validation.map((error) => `<div><b>${escapeHtml(error.fieldKey || "Форма")}</b><span>${escapeHtml(error.message)}</span><code>${escapeHtml(error.code)}</code></div>`).join("")}</section>` : ""}<section class="field-progress"><h4>Поля формы</h4>${fields.map((field) => `<div><span>${escapeHtml(field.fieldKey)}</span><b class="browser-field-${field.status}">${escapeHtml(field.status)}</b>${field.detailCode ? `<small>${escapeHtml(field.detailCode)}</small>` : ""}</div>`).join("") || '<div class="empty-state compact">Поля ещё не обнаружены.</div>'}</section>`;
+  const audit = state.browserAudit.slice(-30).reverse();
+  $("#browser-audit").innerHTML = `<h4>Последние события</h4>${audit.map((item) => `<div class="audit-row"><time>${escapeHtml(new Date(item.recordedAt).toLocaleTimeString("ru-RU"))}</time><b>${escapeHtml(item.event)}</b><span>${escapeHtml([item.fieldKey, item.detailCode].filter(Boolean).join(" · "))}</span></div>`).join("") || '<div class="empty-state compact">Событий пока нет.</div>'}`;
+  const diagnostic = state.browserDiagnostics.at(-1);
+  $("#browser-diagnostics").innerHTML = diagnostic ? `<h4>Последний снимок</h4><div class="diagnostic-summary"><span>${escapeHtml(diagnostic.origin)}</span><span>${diagnostic.fields?.length || 0} полей</span><span>${(diagnostic.challenges || []).length} проверок</span><span>${(diagnostic.validationErrorCodes || []).length} ошибок</span><span>${escapeHtml(new Date(diagnostic.recordedAt).toLocaleString("ru-RU"))}</span></div>` : "";
+}
+
+function resetBrowserWorkflow() {
+  state.browserSession = null;
+  state.browserAudit = [];
+  state.browserDiagnostics = [];
+}
+
+async function loadBrowserWorkflow() {
+  if (!state.draft) { resetBrowserWorkflow(); renderBrowserWorkflow(); return; }
+  const draftId = state.draft.draft.draftId;
+  const [session, audit, diagnostics] = await Promise.all([
+    optional(`/api/v1/application-drafts/${draftId}/browser-session`),
+    request(`/api/v1/application-drafts/${draftId}/browser-audit`),
+    request(`/api/v1/application-drafts/${draftId}/browser-diagnostics`)
+  ]);
+  if (state.draft?.draft?.draftId !== draftId) return;
+  state.browserSession = session;
+  state.browserAudit = audit;
+  state.browserDiagnostics = diagnostics;
+  renderBrowserWorkflow();
+  renderSubmitReview();
+}
+
+function booleanSelectValue(value) {
+  return value == null ? "" : String(value);
+}
+
+function renderApplicationSettings() {
+  const settings = state.settings || {};
+  const form = $("#application-settings-form");
+  form.elements.salaryAmount.value = settings.desiredSalary?.amount ?? "";
+  form.elements.salaryCurrency.value = settings.desiredSalary?.currency || "";
+  form.elements.salaryPeriod.value = settings.desiredSalary?.period || "YEAR";
+  form.elements.salaryNegotiable.checked = Boolean(settings.desiredSalary?.negotiable);
+  form.elements.workAuthorizations.value = (settings.workAuthorizations || []).map((item) => `${item.country} | ${item.status}`).join("\n");
+  form.elements.requiresSponsorship.value = booleanSelectValue(settings.requiresSponsorship);
+  form.elements.relocationWilling.value = booleanSelectValue(settings.relocation?.willing);
+  form.elements.relocationLocations.value = (settings.relocation?.locations || []).join(", ");
+  form.elements.relocationNotes.value = settings.relocation?.notes || "";
+  form.elements.remotePreference.value = settings.remotePreference || "";
+  form.elements.noticePeriod.value = settings.noticePeriod || "";
+  form.elements.earliestStartDate.value = settings.earliestStartDate || "";
+  const configured = Boolean(settings.desiredSalary || settings.workAuthorizations?.length || settings.requiresSponsorship != null || settings.relocation || settings.remotePreference || settings.noticePeriod || settings.earliestStartDate);
+  $("#settings-state").className = configured ? "pill" : "pill muted";
+  $("#settings-state").textContent = configured ? "Сохранено" : "Не заполнено";
+}
+
+function renderAnswerCatalog() {
+  $("#catalog-count").textContent = state.catalog.length;
+  const list = $("#answer-catalog-list");
+  list.innerHTML = state.catalog.length ? state.catalog.map((entry) => `<div class="catalog-item"><div><strong>${escapeHtml(entry.question || entry.key)}</strong><p>${escapeHtml(entry.value)}</p><small>${escapeHtml(entry.topic)} · ${escapeHtml(entry.key)}</small></div><div class="editable-actions"><button type="button" data-edit-answer="${escapeHtml(entry.key)}">Изменить</button><button type="button" data-delete data-delete-answer="${escapeHtml(entry.key)}">Удалить</button></div></div>`).join("") : '<div class="empty-state compact">Сохранённых ответов пока нет.</div>';
+  list.querySelectorAll("[data-edit-answer]").forEach((button) => button.addEventListener("click", () => editCatalogEntry(button.dataset.editAnswer)));
+  list.querySelectorAll("[data-delete-answer]").forEach((button) => button.addEventListener("click", () => deleteCatalogEntry(button.dataset.deleteAnswer)));
+}
+
+async function loadApplicationPreferences() {
+  [state.settings, state.catalog] = await Promise.all([
+    request("/api/v1/application-settings"),
+    request("/api/v1/application-answers")
+  ]);
+  renderApplicationSettings();
+  renderAnswerCatalog();
+}
+
+function parseWorkAuthorizations(value) {
+  return value.split("\n").map((line) => line.trim()).filter(Boolean).map((line) => {
+    const separator = line.indexOf("|");
+    if (separator < 1 || separator === line.length - 1) throw new Error(`Проверьте строку разрешения на работу: «${line}»`);
+    return { country: line.slice(0, separator).trim(), status: line.slice(separator + 1).trim() };
+  });
+}
+
+function optionalBoolean(value) {
+  return value === "" ? null : value === "true";
+}
+
+async function saveApplicationSettings(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector("button[type=submit]");
+  busy(button, true, "Сохраняем…");
+  try {
+    const values = Object.fromEntries(new FormData(form));
+    const salaryAmount = values.salaryAmount?.trim();
+    const relocationWilling = optionalBoolean(values.relocationWilling);
+    const body = {
+      desiredSalary: salaryAmount ? { amount: Number(salaryAmount), currency: values.salaryCurrency.trim().toUpperCase(), period: values.salaryPeriod, negotiable: form.elements.salaryNegotiable.checked } : null,
+      workAuthorizations: parseWorkAuthorizations(values.workAuthorizations || ""),
+      requiresSponsorship: optionalBoolean(values.requiresSponsorship),
+      relocation: relocationWilling == null ? null : { willing: relocationWilling, locations: values.relocationLocations.split(",").map((item) => item.trim()).filter(Boolean), notes: values.relocationNotes.trim() || null },
+      remotePreference: values.remotePreference.trim() || null,
+      noticePeriod: values.noticePeriod.trim() || null,
+      earliestStartDate: values.earliestStartDate || null
+    };
+    if (salaryAmount && body.desiredSalary.currency.length !== 3) throw new Error("Для зарплаты укажите трёхбуквенный код валюты, например USD");
+    state.settings = await request("/api/v1/application-settings", { method: "PUT", body });
+    renderApplicationSettings();
+    toast("Настройки отклика сохранены");
+  } catch (error) { toast(error.message, true); }
+  finally { busy(button, false); }
+}
+
+function editCatalogEntry(key) {
+  const entry = state.catalog.find((item) => item.key === key);
+  if (!entry) return;
+  const form = $("#answer-catalog-form");
+  form.elements.key.value = entry.key;
+  form.elements.key.readOnly = true;
+  form.elements.question.value = entry.question;
+  form.elements.value.value = entry.value;
+  form.elements.topic.value = entry.topic;
+  form.querySelector("button").textContent = "Сохранить ответ";
+  form.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+async function saveCatalogEntry(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const values = Object.fromEntries(new FormData(form));
+  const button = form.querySelector("button");
+  busy(button, true, "Сохраняем…");
+  try {
+    await request(`/api/v1/application-answers/${encodeURIComponent(values.key.trim())}`, { method: "PUT", body: { question: values.question.trim(), value: values.value.trim(), topic: values.topic } });
+    state.catalog = await request("/api/v1/application-answers");
+    form.reset(); form.elements.key.readOnly = false; button.textContent = "Добавить ответ";
+    renderAnswerCatalog(); toast("Ответ сохранён для следующих откликов");
+  } catch (error) { toast(error.message, true); }
+  finally { busy(button, false); }
+}
+
+async function deleteCatalogEntry(key) {
+  if (!window.confirm("Удалить сохранённый ответ?")) return;
+  try {
+    await request(`/api/v1/application-answers/${encodeURIComponent(key)}`, { method: "DELETE" });
+    state.catalog = state.catalog.filter((item) => item.key !== key);
+    renderAnswerCatalog(); toast("Ответ удалён");
+  } catch (error) { toast(error.message, true); }
 }
 
 async function loadInitialState() {
   const status = $("#service-status");
   try {
-    const [profile, identities, confirmed, vacancies] = await Promise.all([
+    const [profile, identities, confirmed, vacancies, settings, catalog] = await Promise.all([
       optional("/api/v1/candidate-profile"),
       request("/api/v1/candidate-identities"),
       optional("/api/v1/candidate-profile/resume-imports/confirmed/latest"),
-      request("/api/v1/vacancies")
+      request("/api/v1/vacancies"),
+      request("/api/v1/application-settings"),
+      request("/api/v1/application-answers")
     ]);
     state.profile = profile;
     state.identities = identities;
     state.vacancies = vacancies;
+    state.settings = settings;
+    state.catalog = catalog;
     if (confirmed) { $("#resume-state").className = "pill"; $("#resume-state").textContent = "Резюме подтверждено"; }
-    renderProfile(); renderIdentities(); renderProfileEditor(); renderVacancies();
+    renderProfile(); renderIdentities(); renderProfileEditor(); renderVacancies(); renderApplicationSettings(); renderAnswerCatalog();
     status.classList.add("online"); status.lastChild.textContent = " Сервис готов";
     if (vacancies.length) await selectVacancy(vacancies[0].id, false);
   } catch (error) {
@@ -335,7 +761,8 @@ async function selectVacancy(id, scroll = true) {
   const vacancy = state.vacancies.find((item) => item.id === id) || await request(`/api/v1/vacancies/${id}`);
   if (selection !== state.vacancySelection) return;
   state.vacancy = vacancy;
-  state.analysis = null; state.variant = null; state.draft = null; state.resumeSelection = null;
+  state.analysis = null; state.variant = null; state.draft = null; state.resumeSelection = null; clearResumePhoto();
+  resetBrowserWorkflow();
   renderVacancies(); renderAnalysis(); renderVariant(); renderDraft();
   const [analysis, variant, draft] = await Promise.all([
     optional(`/api/v1/vacancies/${id}/analysis`),
@@ -345,6 +772,7 @@ async function selectVacancy(id, scroll = true) {
   if (selection !== state.vacancySelection || state.vacancy?.id !== id) return;
   state.analysis = analysis; state.variant = variant; state.draft = draft;
   renderAnalysis(); renderVariant(); renderDraft();
+  await loadBrowserWorkflow();
   if (analysis) await loadResumeSelection();
   if (scroll) $("#analysis-panel").scrollIntoView({ behavior: "smooth", block: "center" });
 }
@@ -359,6 +787,7 @@ async function deleteVacancy(id) {
     if (wasSelected) {
       state.vacancySelection += 1;
       state.vacancy = null; state.analysis = null; state.variant = null; state.draft = null; state.resumeSelection = null;
+      resetBrowserWorkflow();
       renderAnalysis(); renderDraft();
     }
     renderVacancies();
@@ -377,6 +806,7 @@ async function analyzeSelectedVacancy() {
     if (state.vacancy?.id !== vacancyId) return;
     state.analysis = analysis;
     state.variant = null; state.draft = null; state.resumeSelection = null;
+    resetBrowserWorkflow();
     renderAnalysis(); renderVariant(); renderDraft();
     await loadResumeSelection();
     $("#analysis-panel").scrollIntoView({ behavior: "smooth", block: "center" });
@@ -393,7 +823,7 @@ async function createVariant() {
     const variant = await request(`/api/v1/vacancies/${vacancyId}/resume-variants`, { method: "POST", body: selectedResumeContent() });
     if (state.vacancy?.id !== vacancyId) return;
     state.variant = variant;
-    state.draft = null; renderVariant(); renderDraft(); toast("Новая версия резюме готова");
+    state.draft = null; resetBrowserWorkflow(); renderVariant(); renderDraft(); toast("Новая версия резюме готова");
   } catch (error) { toast(error.message, true); }
   finally { busy(button, false); }
 }
@@ -407,12 +837,13 @@ async function prepareApplication() {
     const draft = await request(`/api/v1/vacancies/${vacancyId}/application-drafts`, { method: "POST", body: { resumeVariantId: variantId } });
     if (state.vacancy?.id !== vacancyId) return;
     state.draft = draft;
-    renderDraft(); toast("Черновик отклика создан");
+    resetBrowserWorkflow(); renderDraft(); await loadBrowserWorkflow(); toast("Черновик отклика создан");
   } catch (error) {
     if (error.code === "APPLICATION_DRAFT_ALREADY_OPEN") {
       const draft = await request(`/api/v1/vacancies/${vacancyId}/application-drafts/latest`);
       if (state.vacancy?.id !== vacancyId) return;
       state.draft = draft;
+      await loadBrowserWorkflow();
     }
     else toast(error.message, true);
     renderDraft();
@@ -426,20 +857,42 @@ async function startBrowserRun() {
   try {
     const result = await request(`/api/v1/application-drafts/${state.draft.draft.draftId}/browser-runs`, { method: "POST", body: { formUrl: url, idempotencyKey: `ui-${Date.now()}` } });
     state.draft = result.application.draft;
-    renderDraft(); toast(result.outcome === "PAUSED" ? "Заполнение приостановлено — нужен ваш ответ" : "Доступные поля заполнены");
+    state.browserSession = result.session;
+    renderDraft(); await loadBrowserWorkflow();
+    toast(result.outcome === "PAUSED" ? browserStopCopy(result.session).title : "Доступные поля заполнены");
   } catch (error) {
     const message = error.code === "BROWSER_RUNNER_DISABLED" ? "Браузерное заполнение выключено. Запустите приложение с PLAYWRIGHT_ENABLED=true." : error.message;
     toast(message, true);
   } finally { busy(button, false); }
 }
 
+async function resumeBrowserRun() {
+  const button = $("#resume-browser");
+  busy(button, true, "Пересканируем…");
+  try {
+    const draftId = state.draft.draft.draftId;
+    const result = await request(`/api/v1/application-drafts/${draftId}/browser-runs/resume`, { method: "POST" });
+    state.draft = result.application.draft;
+    state.browserSession = result.session;
+    renderDraft(); await loadBrowserWorkflow();
+    const message = result.outcome === "PAUSED" ? browserStopCopy(result.session).title : "Форма пересканирована, доступные поля заполнены";
+    toast(message);
+  } catch (error) { toast(error.message, true); }
+  finally { busy(button, false); }
+}
+
 async function answerApproval(approvalId) {
   const input = document.querySelector(`[data-value-for="${approvalId}"]`);
+  const saveToCatalog = document.querySelector(`[data-save-for="${approvalId}"]`)?.checked || false;
   const value = input.value.trim();
   if (!value) { toast("Введите или выберите ответ", true); return; }
   try {
-    state.draft = await request(`/api/v1/application-drafts/${state.draft.draft.draftId}/approvals/${approvalId}/decision`, { method: "POST", body: { approved: true, value } });
-    renderDraft(); toast("Ответ сохранён");
+    state.draft = await request(`/api/v1/application-drafts/${state.draft.draft.draftId}/approvals/${approvalId}/decision`, { method: "POST", body: { approved: true, value, saveToCatalog } });
+    if (saveToCatalog) {
+      state.catalog = await request("/api/v1/application-answers");
+      renderAnswerCatalog();
+    }
+    renderDraft(); toast(saveToCatalog ? "Ответ сохранён и добавлен в каталог" : "Ответ сохранён");
   } catch (error) { toast(error.message, true); }
 }
 
@@ -456,8 +909,49 @@ async function approveAndSubmit(approvalId) {
     const draftId = state.draft.draft.draftId;
     await request(`/api/v1/application-drafts/${draftId}/approvals/${approvalId}/decision`, { method: "POST", body: { approved: true } });
     state.draft = await request(`/api/v1/application-drafts/${draftId}/submit`, { method: "POST", body: {} });
-    renderDraft(); toast("Отклик отправлен");
+    renderDraft(); await loadBrowserWorkflow(); toast("Отклик отправлен");
   } catch (error) { toast(error.message, true); }
+}
+
+function localDateTimeValue(date = new Date()) {
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
+}
+
+function openManualSubmissionDialog() {
+  if (state.draft?.draft?.status !== "READY_TO_SUBMIT") {
+    toast("Сначала завершите ответы и проверьте отклик", true);
+    return;
+  }
+  const form = $("#manual-submission-form");
+  form.reset();
+  form.elements.submittedAt.value = localDateTimeValue();
+  $("#manual-submission-dialog").showModal();
+}
+
+async function recordManualSubmission(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const values = Object.fromEntries(new FormData(form));
+  const submittedAt = new Date(values.submittedAt);
+  if (Number.isNaN(submittedAt.getTime())) { toast("Укажите корректную дату отправки", true); return; }
+  if (submittedAt > new Date(Date.now() + 5 * 60_000)) { toast("Дата отправки не может быть в будущем", true); return; }
+  if (submittedAt < new Date(state.draft.draft.createdAt)) { toast("Дата отправки не может быть раньше создания черновика", true); return; }
+  const button = form.querySelector("button[type=submit]");
+  busy(button, true, "Сохраняем…");
+  try {
+    const draftId = state.draft.draft.draftId;
+    const approval = await request(`/api/v1/application-drafts/${draftId}/submit-approval`, { method: "POST" });
+    await request(`/api/v1/application-drafts/${draftId}/approvals/${approval.approvalId}/decision`, { method: "POST", body: { approved: true, note: "Confirmed as already submitted manually" } });
+    state.draft = await request(`/api/v1/application-drafts/${draftId}/manual-submission`, {
+      method: "POST",
+      body: { submittedAt: submittedAt.toISOString(), reference: values.reference.trim(), note: values.note.trim() || null }
+    });
+    $("#manual-submission-dialog").close();
+    renderDraft();
+    toast("Ручная отправка сохранена в истории");
+  } catch (error) { toast(error.message, true); }
+  finally { busy(button, false); }
 }
 
 async function refreshProfile(profile) {
@@ -476,6 +970,8 @@ async function switchIdentity(id) {
     $("#resume-state").className = confirmed ? "pill" : "pill muted";
     $("#resume-state").textContent = confirmed ? "Резюме подтверждено" : "Можно загрузить резюме";
     state.preview = null; state.analysis = null; state.variant = null; state.draft = null; state.resumeSelection = null;
+    resetBrowserWorkflow();
+    await loadApplicationPreferences();
     renderProfile(); renderIdentities(); renderProfileEditor(); renderAnalysis(); renderDraft();
     if (state.vacancy) await selectVacancy(state.vacancy.id, false);
     toast("Identity переключена");
@@ -490,7 +986,9 @@ async function createIdentity() {
   try {
     const profile = await request("/api/v1/candidate-identities", { method: "POST", body: { label: label.trim(), displayName: displayName.trim() } });
     await refreshProfile(profile);
+    await loadApplicationPreferences();
     state.preview = null; state.analysis = null; state.variant = null; state.draft = null; state.resumeSelection = null;
+    resetBrowserWorkflow();
     $("#resume-state").className = "pill muted"; $("#resume-state").textContent = "Чистый профиль";
     renderAnalysis(); renderDraft();
     $("#profile-editor").classList.remove("hidden");
@@ -559,6 +1057,10 @@ $("#select-all").addEventListener("click", () => {
   $("#select-all").textContent = select ? "Снять всё" : "Выбрать всё";
 });
 
+$("#resume-edit-form").addEventListener("submit", saveResumeElement);
+$("#close-resume-edit").addEventListener("click", () => $("#resume-edit-dialog").close());
+$("#cancel-resume-edit").addEventListener("click", () => $("#resume-edit-dialog").close());
+
 $("#confirm-resume").addEventListener("click", async () => {
   const button = $("#confirm-resume"); busy(button, true, "Сохраняем…");
   try {
@@ -586,6 +1088,7 @@ $("#vacancy-form").addEventListener("submit", async (event) => {
   try {
     const vacancy = await request("/api/v1/vacancies", { method: "POST", body: { source: "MANUAL", ...values, externalId: null } });
     state.vacancies.unshift(vacancy); state.vacancy = vacancy; state.analysis = null; state.variant = null; state.draft = null; state.resumeSelection = null;
+    resetBrowserWorkflow();
     renderVacancies(); form.reset(); await analyzeSelectedVacancy();
   } catch (error) { toast(error.message, true); }
   finally { busy(button, false); }
@@ -594,13 +1097,26 @@ $("#vacancy-form").addEventListener("submit", async (event) => {
 $("#create-variant").addEventListener("click", createVariant);
 $("#prepare-application").addEventListener("click", prepareApplication);
 $("#start-browser").addEventListener("click", startBrowserRun);
+$("#record-manual-submission").addEventListener("click", openManualSubmissionDialog);
+$("#manual-submission-form").addEventListener("submit", recordManualSubmission);
+$("#close-manual-submission").addEventListener("click", () => $("#manual-submission-dialog").close());
+$("#cancel-manual-submission").addEventListener("click", () => $("#manual-submission-dialog").close());
+$("#refresh-browser-state").addEventListener("click", async () => {
+  try { await loadBrowserWorkflow(); toast("Состояние browser session обновлено"); }
+  catch (error) { toast(error.message, true); }
+});
+$("#application-settings-form").addEventListener("submit", saveApplicationSettings);
+$("#answer-catalog-form").addEventListener("submit", saveCatalogEntry);
 $("#identity-select").addEventListener("change", (event) => switchIdentity(event.target.value));
 $("#new-identity").addEventListener("click", createIdentity);
 $("#edit-profile").addEventListener("click", () => { renderProfileEditor(); $("#profile-editor").classList.remove("hidden"); });
 $("#close-profile-editor").addEventListener("click", () => $("#profile-editor").classList.add("hidden"));
 $("#selection-defaults").addEventListener("click", () => {
   document.querySelectorAll("[data-selection-kind]").forEach((input) => input.checked = input.dataset.default === "true");
+  clearResumePhoto();
 });
+$("#resume-photo").addEventListener("change", selectResumePhoto);
+$("#remove-resume-photo").addEventListener("click", clearResumePhoto);
 $("#profile-details-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget; const button = form.querySelector("button[type=submit]"); busy(button, true, "Сохраняем…");

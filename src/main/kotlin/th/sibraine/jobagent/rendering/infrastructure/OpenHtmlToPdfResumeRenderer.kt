@@ -12,6 +12,7 @@ import th.sibraine.jobagent.tailoring.domain.ResumeVariant
 import org.springframework.stereotype.Component
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
+import org.apache.pdfbox.Loader
 
 @Component
 class OpenHtmlToPdfResumeRenderer(
@@ -24,23 +25,36 @@ class OpenHtmlToPdfResumeRenderer(
         }
         val document = htmlRenderer.render(variant.resume)
         return try {
-            val output = ByteArrayOutputStream()
-            PdfRendererBuilder()
-                .withHtmlContent(document.html, null)
-                .withProducer("Job Agent CV Renderer")
-                .useFont(font(REGULAR_FONT), FONT_FAMILY, 400, FontStyle.NORMAL, true)
-                .useFont(font(BOLD_FONT), FONT_FAMILY, 700, FontStyle.NORMAL, true)
-                .useFont(font(ITALIC_FONT), FONT_FAMILY, 400, FontStyle.ITALIC, true)
-                .useFont(font(BOLD_ITALIC_FONT), FONT_FAMILY, 700, FontStyle.ITALIC, true)
-                .toStream(output)
-                .run()
-            validator.validate(output.toByteArray(), document.expectedTextBlocks, document.expectedLinkCount)
+            val regularPdf = renderPdf(document.html)
+            val regularPages = pageCount(regularPdf)
+            val compactDocument = if (regularPages > 1) htmlRenderer.render(variant.resume, compact = true) else null
+            val compactPdf = compactDocument?.let { renderPdf(it.html) }
+            val useCompact = compactPdf != null && pageCount(compactPdf) < regularPages
+            val selectedDocument = if (useCompact) compactDocument!! else document
+            val selectedPdf = if (useCompact) compactPdf!! else regularPdf
+            validator.validate(selectedPdf, selectedDocument.expectedTextBlocks, selectedDocument.expectedLinkCount)
         } catch (error: ResumeRenderingException) {
             throw error
         } catch (error: Exception) {
             throw ResumeRenderingException("RESUME_RENDERING_FAILED", "Resume PDF could not be rendered", error)
         }
     }
+
+    private fun renderPdf(html: String): ByteArray {
+        val output = ByteArrayOutputStream()
+        PdfRendererBuilder()
+            .withHtmlContent(html, null)
+            .withProducer("Job Agent CV Renderer")
+            .useFont(font(REGULAR_FONT), FONT_FAMILY, 400, FontStyle.NORMAL, true)
+            .useFont(font(BOLD_FONT), FONT_FAMILY, 700, FontStyle.NORMAL, true)
+            .useFont(font(ITALIC_FONT), FONT_FAMILY, 400, FontStyle.ITALIC, true)
+            .useFont(font(BOLD_ITALIC_FONT), FONT_FAMILY, 700, FontStyle.ITALIC, true)
+            .toStream(output)
+            .run()
+        return output.toByteArray()
+    }
+
+    private fun pageCount(pdf: ByteArray): Int = Loader.loadPDF(pdf).use { it.numberOfPages }
 
     private fun font(path: String) = FSSupplier<InputStream> {
         javaClass.classLoader.getResourceAsStream(path)
