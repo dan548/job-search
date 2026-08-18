@@ -292,6 +292,7 @@ internal class ResumeDecompositionMapper(blocks: List<ResumeTextBlock>) {
 
     fun map(value: ResumeDecomposition): StructuredResume {
         val skills = value.skills
+            .mapNotNull(::normalizeSkill)
             .distinctBy { normalize(it.name) }
             .map { skill ->
                 ResumeSkill(
@@ -374,6 +375,27 @@ internal class ResumeDecompositionMapper(blocks: List<ResumeTextBlock>) {
             },
             skills = skills,
         )
+    }
+
+    private fun normalizeSkill(skill: DecomposedSkill): DecomposedSkill? {
+        var balance = 0
+        val repaired = buildString {
+            skill.name.trim().trim(',', ';', '|').forEach { character ->
+                when (character) {
+                    '(' -> {
+                        balance += 1
+                        append(character)
+                    }
+                    ')' -> if (balance > 0) {
+                        balance -= 1
+                        append(character)
+                    }
+                    else -> append(character)
+                }
+            }
+            repeat(balance) { append(')') }
+        }.trim()
+        return repaired.takeIf(String::isNotBlank)?.let { skill.copy(name = it) }
     }
 
     private fun textElement(type: String, value: DecomposedText) = ResumeTextElement(

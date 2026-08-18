@@ -246,12 +246,16 @@ function renderVacancies() {
   list.innerHTML = state.vacancies.length ? state.vacancies.map((vacancy) => `
     <div class="vacancy-row ${state.vacancy?.id === vacancy.id ? "active" : ""}">
       <button class="vacancy-item" type="button" data-vacancy-id="${vacancy.id}">
-        <strong>${escapeHtml(vacancy.title)}</strong><span>${escapeHtml(vacancy.company)}${vacancy.location ? ` · ${escapeHtml(vacancy.location)}` : ""}</span>
+        <strong>${escapeHtml(vacancy.title)}</strong><span>${escapeHtml([vacancy.company, vacancy.location, employmentTypeLabel(vacancy.employmentType)].filter(Boolean).join(" · "))}</span>
       </button>
       <button class="vacancy-delete" type="button" data-delete-vacancy-id="${vacancy.id}" aria-label="Удалить вакансию ${escapeHtml(vacancy.title)}" title="Удалить вакансию">×</button>
     </div>`).join("") : '<div class="empty-state compact">Сохранённых вакансий пока нет.</div>';
   list.querySelectorAll("[data-vacancy-id]").forEach((button) => button.addEventListener("click", () => selectVacancy(button.dataset.vacancyId)));
   list.querySelectorAll("[data-delete-vacancy-id]").forEach((button) => button.addEventListener("click", () => deleteVacancy(button.dataset.deleteVacancyId)));
+}
+
+function employmentTypeLabel(value) {
+  return ({ FULL_TIME: "Полная занятость", PART_TIME: "Частичная занятость", CONTRACT: "Контракт", INTERNSHIP: "Стажировка", TEMPORARY: "Временная работа" })[value] || "";
 }
 
 function fillVacancyForm(vacancy) {
@@ -260,6 +264,7 @@ function fillVacancyForm(vacancy) {
   form.elements.company.value = values.company || "";
   form.elements.title.value = values.title || "";
   form.elements.location.value = values.location || "";
+  form.elements.employmentType.value = values.employmentType || "";
   form.elements.url.value = values.url || "";
   form.elements.description.value = values.description || "";
   form.dataset.sourceVacancyId = vacancy?.id || "";
@@ -1272,7 +1277,7 @@ $("#vacancy-form").addEventListener("submit", async (event) => {
   const button = form.querySelector("button"); busy(button, true, "Сохраняем…");
   const values = Object.fromEntries(new FormData(form));
   try {
-    const vacancy = await request("/api/v1/vacancies", { method: "POST", body: { source: "MANUAL", ...values, externalId: null } });
+    const vacancy = await request("/api/v1/vacancies", { method: "POST", body: { source: "MANUAL", ...values, employmentType: values.employmentType || null, externalId: null } });
     state.vacancies.unshift(vacancy); state.vacancy = vacancy; state.analysis = null; state.variant = null; state.draft = null; state.resumeSelection = null;
     resetBrowserWorkflow();
     renderVacancies(); fillVacancyForm(vacancy); await analyzeSelectedVacancy();
